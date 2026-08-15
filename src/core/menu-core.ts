@@ -22,7 +22,7 @@ export type ListFn = (sessionId: string, path: string, filter: string) => Promis
 export const ATFM_STYLE_ID = 'dsh-plugin-chat-menu/atfm.css'
 
 export const ATFM_CSS = `
-.atfm-menu{position:absolute;z-index:150;width:560px;max-width:calc(100vw - 32px);max-height:400px;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu);box-shadow:var(--dsw-shadow-lv3);border-radius:12px;padding:4px;overflow:hidden;font-size:13px;line-height:20px}
+.atfm-menu{position:absolute;z-index:200;width:560px;max-width:calc(100vw - 32px);max-height:400px;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu);box-shadow:var(--dsw-shadow-lv3);border-radius:12px;padding:4px;overflow:hidden;font-size:13px;line-height:20px}
 .atfm-box{display:flex;align-items:center;gap:6px;margin:2px 2px 6px;padding:0 8px;border:1px solid var(--dsw-alias-border-inverted);border-radius:8px}
 .atfm-box input{flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--dsw-alias-label-primary);padding:7px 0;font-size:13px}
 .atfm-crumbs{display:flex;align-items:center;gap:2px;flex-wrap:wrap;padding:0 8px 6px;font-size:12px}
@@ -91,10 +91,10 @@ function quoteIfNeeded(relPath: string): string {
 }
 
 /**
- * Measure the caret's viewport rectangle inside a textarea: render an
- * off-screen mirror with the same metrics and the text before the caret,
- * then read the marker span's rect. Mirror is fixed at (0,0) so
- * getBoundingClientRect returns viewport coordinates directly.
+ * Measure the caret's viewport rectangle inside a textarea via an off-screen
+ * mirror with the same metrics. The marker rect is read in the mirror's
+ * content coordinates, then translated to the textarea's true viewport
+ * position: textarea rect + marker offset − scroll offset.
  */
 function caretViewportRect(textarea: HTMLTextAreaElement): { left: number; top: number; height: number } {
   const pos = textarea.selectionStart ?? textarea.value.length
@@ -123,9 +123,14 @@ function caretViewportRect(textarea: HTMLTextAreaElement): { left: number; top: 
   marker.textContent = '\u200b'
   mirror.appendChild(marker)
   document.body.appendChild(mirror)
-  const rect = marker.getBoundingClientRect()
+  const markerRect = marker.getBoundingClientRect()
   document.body.removeChild(mirror)
-  return { left: rect.left, top: rect.top, height: rect.height }
+  const taRect = textarea.getBoundingClientRect()
+  return {
+    left: taRect.left + markerRect.left - textarea.scrollLeft,
+    top: taRect.top + markerRect.top - textarea.scrollTop,
+    height: markerRect.height,
+  }
 }
 
 /** Per-entry snippet formats (dir default「进入」, file default「路径」). */
@@ -176,7 +181,6 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
     const [pos, setPos] = React.useState<{ left: number; top: number; maxHeight: number } | null>(null)
     const [tip, setTip] = React.useState<{ text: string; left: number; top: number } | null>(null)
     hitRef.current = hit
-
     const close = React.useCallback(() => {
       const wasOpen = hitRef.current !== null
       setHit(null)
@@ -347,8 +351,8 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
       return () => document.removeEventListener('keydown', onKeyDown, true)
     }, [hit === null, browse, focus, variant, close])
 
-    // 菜单定位：锚定输入框光标，优先在光标上方；上方空间不足则翻到下方；
-    // 水平/垂直均钳制在视口内（防遮挡溢出）。滚动/缩放/内容变化时重新布局。
+    // 菜单定位：基于输入框里的 @ 光标，优先显示在光标上方；上方空间不足翻到下方；
+    // 水平/垂直钳制在视口内（防遮挡溢出）。滚动/缩放/内容变化时重新布局。
     React.useEffect(() => {
       if (hit === null) return
       const layout = (): void => {
