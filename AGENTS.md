@@ -41,21 +41,21 @@ dsh-plugin-chat-menu/
 
 **单一源码保证**：两种安装形态（bundle 版 `lib/` 与动态版 `dynamic/`）由 `npm run build` 从同一份 TypeScript 源码生成，只差安装方式 / 注册周期 / 传输通道。改逻辑只改 `src/`，禁止手工编辑 `lib/` 或 `dynamic/`（构建产物，gitignore）。
 
-- **共享核心（`src/core/`）**：`host-core.ts`（目录列举逻辑，服务注入、无环境依赖）、`menu-core.ts`（@ 菜单 UI，React/RPC 注入，含 `createMenu` / `buildApply` / CSS）。核心不得引用任何宿主符号（无 harness / styles / require）。
+- **共享核心（`src/core/`）**：`host-core.ts`（目录列举逻辑，服务注入、无环境依赖）、`source-core.ts`（`@` 文件源：`buildFileSource(list)` 产出 `candidates`/`onPick`/`matchSpace`/`matchEnter`，`buildApply` 注册进内置 `inputTriggers` 管线；菜单渲染与键盘仲裁由 DSH 原生 MenuView 提供，无自绘 UI）。核心不得引用任何宿主符号（无 harness / require）。
 - **Host 装配（`src/host/`）**：
   - `bundle.ts` — ESM 函数插件（命名导出 `name`/`inject`/`apply`），`webServer` 路由 `/chat-menu/list` + 回环/同源信任栅栏；
   - `dynamic.ts` — 动态桥（`harness.handle`），与 bundle 共用同一 `host-core` 核心。
-- **浏览器半壳（在 `scripts/build.mjs` 模板内）**：bundle = module-loader factory（`require('react')` + fetch）；动态 = 闭包符号（React / host）+ `host.call`。两者都调 `CHATMENU_CORE.buildApply(...)`，UI 全部来自 `menu-core.ts`。
+- **浏览器半壳（在 `scripts/build.mjs` 模板内）**：bundle = module-loader factory（fetch `/chat-menu/list`）；动态 = 闭包符号（`host.call`）。两者都调 `CHATMENU_CORE.buildApply({ list })`，source 逻辑全部来自 `source-core.ts`。
 - **构建**：`npm run typecheck`（tsc --noEmit）→ `npm run build`（esbuild）产出 `lib/index.js`、`lib/client.js`、`lib/client-registry.js`、`dynamic/host.js`、`dynamic/client.js`。
-- **副作用可回收**：事件监听、路由注册等一律挂插件 Fiber（`ctx.effect` / 组件 `useEffect`），stop/update 后不留残留。
-- **UI 位置**：输入区浮层类 UI 注册在 `conversation.input.overlay` 槽位（先 `cordis_inspect_query` 确认槽位契约）。
+- **副作用可回收**：路由注册、source 注册等一律挂插件 Fiber（`ctx.effect` / `harness.handle` 由运行器回收），stop/update 后不留残留。
+- **UI 位置**：`@` 源注册进 `inputTriggers` 服务（trigger `'@'`，name `'文件'`），由内置管线渲染；重复注册会抛错，注册需幂等处理。
 
 ## 动态插件形态（`dynamic/`，构建产物）
 
 `dynamic/host.js` / `dynamic/client.js` 是动态 Cordis 插件函数体（`var` + `return { name, apply }`），通过会话内工具装载（`cordis_define` + `cordis_run`），适合未发布 npm 时使用/调试：
 
-- Host 半用 `harness.handle` 注册 RPC；浏览器半用闭包符号（`React` / `host`）——传输通道与 bundle 版不同，逻辑共用核心。
-- 两种形态功能一致，**同一时间只装一种**（都注册 `@` 文件菜单；bundle 版 overlay id `chat-menu`，动态版 `at-file-menu`）。
+- Host 半用 `harness.handle` 注册 RPC；浏览器半用闭包符号（`host`）+ `host.call`——传输通道与 bundle 版不同，逻辑共用核心。
+- 两种形态功能一致，**同一时间只装一种**（都向 `inputTriggers` 注册 `@文件` 源；同时运行会重复注册冲突）。
 - 动态版随进程重启清空，需要重新装载。
 
 ## 装载流程
