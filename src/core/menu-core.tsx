@@ -17,7 +17,7 @@ export type ListFn = (sessionId: string, path: string, filter: string) => Promis
 export const ATFM_STYLE_ID = 'dsh-plugin-chat-menu/atfm.css'
 
 export const ATFM_CSS = `
-.atfm-menu{position:absolute;bottom:calc(100% + 4px);left:0;z-index:200;width:560px;max-width:calc(100vw - 32px);max-height:400px;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu);box-shadow:var(--dsw-shadow-lv3);border-radius:12px;padding:4px;overflow:hidden;font-size:13px;line-height:20px}
+.atfm-menu{position:absolute;bottom:calc(100% + 4px);left:0;z-index:200;width:560px;max-width:calc(100vw - 32px);min-height:160px;max-height:400px;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu);box-shadow:var(--dsw-shadow-lv3);border-radius:12px;padding:4px;overflow:hidden;font-size:13px;line-height:20px}
 .atfm-box{display:flex;align-items:center;gap:6px;margin:2px 2px 6px;padding:0 8px;border:1px solid var(--dsw-alias-border-inverted);border-radius:8px}
 .atfm-box input{flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--dsw-alias-label-primary);padding:7px 0;font-size:13px}
 .atfm-crumbs{display:flex;align-items:center;gap:2px;flex-wrap:wrap;padding:0 8px 6px;font-size:12px}
