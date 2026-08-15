@@ -13,6 +13,9 @@ declare const harness: {
 /** Plugin identity. */
 export const name = 'dsh-plugin-chat-menu'
 
+/** Services the guarded ctx reads as properties (fs/sessions); the dynamic guard rejects undeclared property access. */
+export const inject = ['fs', 'sessions']
+
 /** Mount the fsmenu/list RPC (the dynamic runner owns harness-handler cleanup). */
 export function apply(ctx: Ctx): void {
   harness.handle('fsmenu/list', async (args: unknown) => {
