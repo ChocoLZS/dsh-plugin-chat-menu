@@ -40,6 +40,149 @@ const readHint = (hint: string): { relPath: string; type: string } | null => {
   return { relPath: hint.slice(0, at), type: hint.slice(at + 1) }
 }
 
+/** Detect the @token from draft + caret (same word-boundary rule as the built-in trigger). */
+function detectAt(draft: string, caret: number): { start: number; query: string } | null {
+  for (let i = caret - 1; i >= 0; i--) {
+    const ch = draft.charAt(i)
+    if (/\s/.test(ch)) return null
+    if (ch !== '@') continue
+    if (i === 0) return { start: i, query: draft.slice(i + 1, caret) }
+    const prev = draft.charAt(i - 1)
+    if (/[\p{L}\p{N}_]/u.test(prev)) continue
+    return { start: i, query: draft.slice(i + 1, caret) }
+  }
+  return null
+}
+
+// ---- 原生 @ 菜单的增强层（外层包装）：hover tooltip + ←/→ 层级按键 ----
+// 不替换内置菜单，只在其外挂事件：读取 MenuView 的 DOM（role="option"、
+// aria-activedescendant / dsh-slash-option-文件-<i> 前缀）与输入框值协同。
+
+const TOOLTIP_STYLE_ID = 'dsh-plugin-chat-menu/tooltip.css'
+const TOOLTIP_CSS = `
+.chatmenu-tooltip{position:fixed;z-index:300;max-width:min(520px,70vw);padding:4px 10px;border:1px solid var(--dsw-alias-border-inverted);border-radius:8px;background:var(--dsw-specific-tooltip,var(--dsw-specific-menu));color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-shadow-lv3);font-size:12px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+`
+
+let tooltipEl: HTMLDivElement | null = null
+let tooltipListeners = 0
+
+function ensureTooltipCss(): void {
+  if (typeof document !== 'undefined'
+    && document.querySelector('style[data-plugin-css=' + JSON.stringify(TOOLTIP_STYLE_ID) + ']') === null) {
+    const tag = document.createElement('style')
+    tag.dataset.plugin = 'dsh-plugin-chat-menu'
+    tag.dataset.pluginCss = TOOLTIP_STYLE_ID
+    tag.textContent = TOOLTIP_CSS
+    document.head.appendChild(tag)
+  }
+}
+
+/** 悬停内置菜单「文件」分组的条目时显示完整文件名/路径（DOM 文本是全文，CSS 截断只是视觉）。 */
+function attachHoverTooltip(): () => void {
+  tooltipListeners++
+  const onMouseMove = (event: MouseEvent): void => {
+    const target = event.target
+    if (!(target instanceof Element)) return
+    const option = target.closest('button[role="option"]')
+    if (option === null || !option.id.startsWith('dsh-slash-option-文件-')) return
+    const children = option.children
+    const name = children.length > 1 ? (children[children.length - 2].textContent ?? '') : ''
+    const desc = children.length > 0 ? (children[children.length - 1].textContent ?? '') : ''
+    const text = (name.endsWith('/') ? '📁 ' : '📄 ') + (desc.trim() !== '' ? desc : name)
+    if (tooltipEl === null) {
+      tooltipEl = document.createElement('div')
+      tooltipEl.className = 'chatmenu-tooltip'
+      document.body.appendChild(tooltipEl)
+    }
+    const tipWidth = 240
+    const tipHeight = 26
+    const gap = 12
+    let left = event.clientX + gap
+    if (left + tipWidth > window.innerWidth - 8) left = Math.max(8, event.clientX - tipWidth - gap)
+    let top = event.clientY + gap
+    if (top + tipHeight > window.innerHeight - 8) top = Math.max(8, event.clientY - tipHeight - gap)
+    tooltipEl.textContent = text
+    tooltipEl.style.left = left + 'px'
+    tooltipEl.style.top = top + 'px'
+    tooltipEl.style.display = 'block'
+  }
+  const hide = (): void => {
+    if (tooltipEl !== null) tooltipEl.style.display = 'none'
+  }
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseout', hide)
+  return () => {
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseout', hide)
+    tooltipListeners = Math.max(0, tooltipListeners - 1)
+    if (tooltipListeners === 0 && tooltipEl !== null && tooltipEl.parentNode !== null) {
+      tooltipEl.parentNode.removeChild(tooltipEl)
+      tooltipEl = null
+    }
+  }
+}
+
+/** 原生触发菜单是否打开且高亮了一个选项（返回高亮的 option 元素）。 */
+function highlightedOption(): Element | null {
+  const menu = document.querySelector('[role="listbox"][aria-activedescendant]')
+  const id = menu !== null ? menu.getAttribute('aria-activedescendant') : null
+  if (id === null || !id.startsWith('dsh-slash-option-')) return null
+  return document.getElementById(id)
+}
+
+/** 通过 React 受控输入的“原生 setter + input 事件”驱动输入框值，使内置管线重新 track。 */
+function setComposerValue(textarea: HTMLTextAreaElement, next: string, caret: number): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+  if (setter === undefined) return
+  setter.call(textarea, next)
+  try { textarea.setSelectionRange(caret, caret) } catch { /* 忽略边界 */ }
+  textarea.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
+/**
+ * ←/→ 层级按键：菜单打开且焦点在输入框时，
+ * → 进入高亮目录（读取 aria-activedescendant 的「文件」分组目录项），
+ * ← 返回上一级（缩短当前 @token 的路径段）。
+ * 通过 setComposerValue 让内置管线立即重新 track，菜单即时刷新。
+ */
+function attachInputKeys(): () => void {
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.isComposing) return
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    const textarea = document.activeElement
+    if (!(textarea instanceof HTMLTextAreaElement)) return
+    const caret = textarea.selectionStart ?? textarea.value.length
+    const hit = detectAt(textarea.value, caret)
+    if (hit === null) return
+    if (event.key === 'ArrowRight') {
+      const option = highlightedOption()
+      if (option === null || !option.id.startsWith('dsh-slash-option-文件-')) return
+      const children = option.children
+      const name = children.length > 1 ? (children[children.length - 2].textContent ?? '') : ''
+      const desc = children.length > 0 ? (children[children.length - 1].textContent ?? '') : ''
+      if (!name.endsWith('/') || desc.trim() === '') return
+      // 进入高亮目录：token → @relPath/
+      const next = textarea.value.slice(0, hit.start) + '@' + desc.trim() + '/' + textarea.value.slice(caret)
+      event.preventDefault()
+      event.stopPropagation()
+      setComposerValue(textarea, next, hit.start + desc.trim().length + 2)
+      return
+    }
+    // ArrowLeft：返回上一级（缩短 @token 的路径段；根层过滤时放行）
+    const lastSlash = hit.query.lastIndexOf('/')
+    if (lastSlash < 0) return // 根层过滤 → 放行（光标正常移动）
+    const pathPart = hit.query.slice(0, lastSlash)
+    const parentSlash = pathPart.lastIndexOf('/')
+    const parent = parentSlash < 0 ? '' : pathPart.slice(0, parentSlash + 1)
+    const next = textarea.value.slice(0, hit.start) + '@' + parent + textarea.value.slice(caret)
+    event.preventDefault()
+    event.stopPropagation()
+    setComposerValue(textarea, next, hit.start + parent.length + 1)
+  }
+  document.addEventListener('keydown', onKeyDown, true)
+  return () => document.removeEventListener('keydown', onKeyDown, true)
+}
+
 /** A candidate item the built-in MenuView renders (hint is pick-time metadata). */
 interface Candidate {
   name: string
@@ -131,14 +274,22 @@ export function buildApply(deps: { list: ListFn }): (ctx: { get(name: string): u
     }
     const source = buildFileSource(deps.list)
     ctx.effect(() => {
+      ensureTooltipCss()
+      const disposeTooltip = attachHoverTooltip()
+      const disposeKeys = attachInputKeys()
+      let disposeSource = () => {}
       try {
-        return inputTriggers.registerSource(source)
+        disposeSource = inputTriggers.registerSource(source)
       } catch (error) {
         // 更新切换时旧实例可能尚未完全卸载，导致同 (trigger, name) 重复注册；
         // 已存在则视为本实例的源已生效（旧 fiber 注销后由幸存实例持有）
         console.warn('chat-menu: @文件 source 已存在，跳过重复注册', error)
-        return () => {}
       }
-    }, 'chat-menu: @file source')
+      return () => {
+        disposeSource()
+        disposeKeys()
+        disposeTooltip()
+      }
+    }, 'chat-menu: @file source + 增强层')
   }
 }
