@@ -22,7 +22,7 @@ export type ListFn = (sessionId: string, path: string, filter: string) => Promis
 export const ATFM_STYLE_ID = 'dsh-plugin-chat-menu/atfm.css'
 
 export const ATFM_CSS = `
-.atfm-menu{position:fixed;z-index:200;width:560px;max-width:calc(100vw - 32px);max-height:400px;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu);box-shadow:var(--dsw-shadow-lv3);border-radius:12px;padding:4px;overflow:hidden;font-size:13px;line-height:20px}
+.atfm-menu{position:absolute;bottom:calc(100% + 4px);left:0;z-index:200;width:560px;max-width:calc(100vw - 32px);max-height:400px;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu);box-shadow:var(--dsw-shadow-lv3);border-radius:12px;padding:4px;overflow:hidden;font-size:13px;line-height:20px}
 .atfm-box{display:flex;align-items:center;gap:6px;margin:2px 2px 6px;padding:0 8px;border:1px solid var(--dsw-alias-border-inverted);border-radius:8px}
 .atfm-box input{flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--dsw-alias-label-primary);padding:7px 0;font-size:13px}
 .atfm-crumbs{display:flex;align-items:center;gap:2px;flex-wrap:wrap;padding:0 8px 6px;font-size:12px}
@@ -178,7 +178,7 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
     const hitRef = React.useRef<{ start: number; end: number } | null>(null)
     const pickRef = React.useRef<((item: Entry, variantIndex: number) => void) | null>(null)
     const lastDraftRef = React.useRef<string | null>(null)
-    const [pos, setPos] = React.useState<{ left: number; top: number; maxHeight: number; maxWidth: number } | null>(null)
+    const [pos, setPos] = React.useState<{ left: number | undefined; top: number | undefined; maxHeight: number; maxWidth: number } | null>(null)
     const [tip, setTip] = React.useState<{ text: string; left: number; top: number } | null>(null)
     hitRef.current = hit
     const close = React.useCallback(() => {
@@ -351,14 +351,19 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
       return () => document.removeEventListener('keydown', onKeyDown, true)
     }, [hit === null, browse, focus, variant, close])
 
-    // 菜单定位：基于输入框里的 @ 光标，左缘对齐光标（即 @ 右侧）、优先在光标上方；
-    // 高度封顶（视口内滚动），水平/垂直钳制在视口内。滚动/缩放/内容变化时重新布局。
+    // 菜单定位：基于输入框里的 @ 光标（absolute 相对锚点容器，兼容变换祖先环境），
+    // 左缘对齐光标（@ 右侧）、优先在光标上方；高度封顶（视口内滚动）；
+    // 找不到定位祖先时退回对话框锚定（CSS bottom:100%+4px left:0）。
     React.useEffect(() => {
       if (hit === null) return
       const layout = (): void => {
         setTip(null)
         const active = document.activeElement
         if (!(active instanceof HTMLTextAreaElement)) return
+        const anchor = rootRef.current !== null && rootRef.current.offsetParent instanceof HTMLElement
+          ? rootRef.current.offsetParent
+          : null
+        const anchorRect = anchor !== null ? anchor.getBoundingClientRect() : null
         const caret = caretViewportRect(active)
         const margin = 8
         // 高度上限：不超过 400px（配合 .atfm-viewport 内部滚动），同时不超过视口
@@ -377,7 +382,16 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
           maxWidth = 560
           left = Math.max(margin, window.innerWidth - 560 - margin)
         }
-        setPos({ left, top, maxHeight: maxMenuHeight, maxWidth })
+        if (anchorRect !== null) {
+          left -= anchorRect.left
+          top -= anchorRect.top
+        }
+        setPos({
+          left: anchorRect !== null ? left : undefined,
+          top: anchorRect !== null ? top : undefined,
+          maxHeight: maxMenuHeight,
+          maxWidth,
+        })
       }
       layout()
       window.addEventListener('resize', layout)
