@@ -439,13 +439,15 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
       : []
     const fmtPreviews = highlighted !== undefined ? formatsFor(highlighted) : []
 
-    const showTip = (event: { currentTarget: HTMLElement }, item: Entry): void => {
-      const rect = event.currentTarget.getBoundingClientRect()
+    const showTip = (event: { clientX: number; clientY: number }, item: Entry): void => {
+      // tooltip 跟随鼠标位置弹出，带小偏移避免盖住光标；越界时翻到另一侧
       const tipWidth = 240
-      let left = rect.right + 8
-      if (left + tipWidth > window.innerWidth - 8) left = rect.left - tipWidth - 8
-      let top = rect.top
-      if (top + 26 > window.innerHeight - 8) top = Math.max(8, window.innerHeight - 26 - 8)
+      const tipHeight = 26
+      const gap = 14
+      let left = event.clientX + gap
+      if (left + tipWidth > window.innerWidth - 8) left = Math.max(8, event.clientX - tipWidth - gap)
+      let top = event.clientY + gap
+      if (top + tipHeight > window.innerHeight - 8) top = Math.max(8, event.clientY - tipHeight - gap)
       setTip({ text: (item.type === 'directory' ? '📁 ' : '📄 ') + item.relPath, left, top })
     }
 
@@ -487,10 +489,11 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
                   if (item.type === 'directory') setQueryText(item.relPath + '/')
                   else pick(item, 0)
                 },
-                onMouseEnter: (event: { currentTarget: HTMLElement }) => {
+                onMouseEnter: (event: { clientX: number; clientY: number }) => {
                   if (index !== focus) { setFocus(index); setVariant(0) }
                   showTip(event, item)
                 },
+                onMouseMove: (event: { clientX: number; clientY: number }) => showTip(event, item),
                 onMouseLeave: () => setTip(null),
               },
                 React.createElement('span', { className: 'atfm-icon' }, item.type === 'directory' ? DIR_ICON : FILE_ICON),
