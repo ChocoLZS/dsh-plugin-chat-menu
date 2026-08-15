@@ -22,7 +22,7 @@ export type ListFn = (sessionId: string, path: string, filter: string) => Promis
 export const ATFM_STYLE_ID = 'dsh-plugin-chat-menu/atfm.css'
 
 export const ATFM_CSS = `
-.atfm-menu{position:absolute;bottom:calc(100% + 4px);left:0;z-index:150;width:560px;max-width:calc(100vw - 32px);max-height:400px;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu);box-shadow:var(--dsw-shadow-lv3);border-radius:12px;padding:4px;overflow:hidden;font-size:13px;line-height:20px}
+.atfm-menu{position:absolute;z-index:150;width:560px;max-width:calc(100vw - 32px);max-height:400px;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu);box-shadow:var(--dsw-shadow-lv3);border-radius:12px;padding:4px;overflow:hidden;font-size:13px;line-height:20px}
 .atfm-box{display:flex;align-items:center;gap:6px;margin:2px 2px 6px;padding:0 8px;border:1px solid var(--dsw-alias-border-inverted);border-radius:8px}
 .atfm-box input{flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--dsw-alias-label-primary);padding:7px 0;font-size:13px}
 .atfm-crumbs{display:flex;align-items:center;gap:2px;flex-wrap:wrap;padding:0 8px 6px;font-size:12px}
@@ -40,6 +40,7 @@ export const ATFM_CSS = `
 .atfm-footer-label{color:var(--dsw-alias-label-dimmed);font-size:12px}
 .atfm-chip{cursor:pointer;border:1px solid var(--dsw-alias-border-inverted);background:transparent;color:var(--dsw-alias-label-tertiary);padding:3px 8px;border-radius:999px;font-size:12px}
 .atfm-chip:hover,.atfm-chip.active{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.atfm-tooltip{position:fixed;z-index:200;max-width:min(480px,60vw);padding:4px 10px;border:1px solid var(--dsw-alias-border-inverted);border-radius:8px;background:var(--dsw-specific-tooltip,var(--dsw-specific-menu));color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-shadow-lv3);font-size:12px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
 `
 
 /** Inject the menu stylesheet once (idempotent; works in both bundle and dynamic environments). */
@@ -89,6 +90,44 @@ function quoteIfNeeded(relPath: string): string {
   return /[\s"]/.test(relPath) ? '"' + relPath + '"' : relPath
 }
 
+/**
+ * Measure the caret's viewport rectangle inside a textarea: render an
+ * off-screen mirror with the same metrics and the text before the caret,
+ * then read the marker span's rect. Mirror is fixed at (0,0) so
+ * getBoundingClientRect returns viewport coordinates directly.
+ */
+function caretViewportRect(textarea: HTMLTextAreaElement): { left: number; top: number; height: number } {
+  const pos = textarea.selectionStart ?? textarea.value.length
+  const style = getComputedStyle(textarea)
+  const mirror = document.createElement('div')
+  const props = [
+    'boxSizing', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant',
+    'letterSpacing', 'lineHeight', 'tabSize', 'textTransform', 'textIndent',
+    'paddingLeft', 'paddingRight', 'paddingTop', 'paddingBottom',
+    'borderLeftWidth', 'borderRightWidth', 'borderTopWidth', 'borderBottomWidth',
+  ]
+  for (const p of props) {
+    const v = style.getPropertyValue(p)
+    if (v !== '') (mirror as unknown as Record<string, string>)[p] = v
+  }
+  mirror.style.position = 'fixed'
+  mirror.style.top = '0'
+  mirror.style.left = '0'
+  mirror.style.visibility = 'hidden'
+  mirror.style.whiteSpace = 'pre-wrap'
+  mirror.style.wordWrap = 'break-word'
+  mirror.style.overflowWrap = 'break-word'
+  mirror.style.width = textarea.clientWidth + 'px'
+  mirror.textContent = textarea.value.slice(0, pos)
+  const marker = document.createElement('span')
+  marker.textContent = '\u200b'
+  mirror.appendChild(marker)
+  document.body.appendChild(mirror)
+  const rect = marker.getBoundingClientRect()
+  document.body.removeChild(mirror)
+  return { left: rect.left, top: rect.top, height: rect.height }
+}
+
 /** Per-entry snippet formats (dir default「进入」, file default「路径」). */
 function formatsFor(item: Entry): string[] {
   if (item.type === 'directory') {
@@ -134,6 +173,8 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
     const hitRef = React.useRef<{ start: number; end: number } | null>(null)
     const pickRef = React.useRef<((item: Entry, variantIndex: number) => void) | null>(null)
     const lastDraftRef = React.useRef<string | null>(null)
+    const [pos, setPos] = React.useState<{ left: number; top: number; maxHeight: number } | null>(null)
+    const [tip, setTip] = React.useState<{ text: string; left: number; top: number } | null>(null)
     hitRef.current = hit
 
     const close = React.useCallback(() => {
@@ -306,6 +347,41 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
       return () => document.removeEventListener('keydown', onKeyDown, true)
     }, [hit === null, browse, focus, variant, close])
 
+    // 菜单定位：锚定输入框光标，优先在光标上方；上方空间不足则翻到下方；
+    // 水平/垂直均钳制在视口内（防遮挡溢出）。滚动/缩放/内容变化时重新布局。
+    React.useEffect(() => {
+      if (hit === null) return
+      const layout = (): void => {
+        setTip(null)
+        const active = document.activeElement
+        if (!(active instanceof HTMLTextAreaElement)) return
+        const context = rootRef.current !== null && rootRef.current.offsetParent instanceof HTMLElement
+          ? rootRef.current.offsetParent
+          : null
+        const ctxRect = context !== null ? context.getBoundingClientRect() : null
+        const caret = caretViewportRect(active)
+        const margin = 8
+        const viewportMax = Math.max(160, window.innerHeight - margin * 2)
+        const measured = rootRef.current !== null ? rootRef.current.offsetHeight : 0
+        const menuHeight = Math.max(0, Math.min(measured || 320, viewportMax))
+        const menuWidth = rootRef.current !== null ? rootRef.current.offsetWidth : 560
+        let top = caret.top - menuHeight - 6
+        if (top < margin) top = caret.top + caret.height + 6
+        top = Math.max(margin, Math.min(top, window.innerHeight - margin - Math.min(measured || 320, viewportMax)))
+        let left = caret.left
+        if (left + menuWidth > window.innerWidth - margin) left = Math.max(margin, window.innerWidth - menuWidth - margin)
+        const base = ctxRect !== null ? { x: ctxRect.left, y: ctxRect.top } : { x: 0, y: 0 }
+        setPos({ left: left - base.x, top: top - base.y, maxHeight: viewportMax })
+      }
+      layout()
+      window.addEventListener('resize', layout)
+      document.addEventListener('scroll', layout, true)
+      return () => {
+        window.removeEventListener('resize', layout)
+        document.removeEventListener('scroll', layout, true)
+      }
+    }, [hit, queryText, browse, close])
+
     // 高亮项滚动到可见
     React.useEffect(() => {
       if (hit === null || focus < 0) return
@@ -359,62 +435,77 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
       : []
     const fmtPreviews = highlighted !== undefined ? formatsFor(highlighted) : []
 
-    return React.createElement('div', { ref: rootRef, className: 'atfm-menu', role: 'listbox' },
-      React.createElement('div', { className: 'atfm-box' },
-        React.createElement('span', { 'aria-hidden': 'true' }, '🔍'),
-        React.createElement('input', {
-          value: queryText,
-          placeholder: '搜索文件 / 目录（递归）…',
-          'aria-label': '搜索文件或目录',
-          onChange: (event: { target: { value: string } }) => setQueryText(event.target.value),
-        }),
-      ),
-      browse.dir !== '' && React.createElement('div', { className: 'atfm-crumbs' },
-        React.createElement('button', { className: 'atfm-crumb', onMouseDown: (event: { preventDefault(): void }) => { event.preventDefault(); setQueryText('') } }, '工作目录'),
-        crumbParts.map((part, index) => React.createElement(React.Fragment, { key: index },
-          React.createElement('span', { className: 'atfm-crumb-sep' }, '/'),
-          React.createElement('button', {
-            className: 'atfm-crumb',
-            onMouseDown: (event: { preventDefault(): void }) => { event.preventDefault(); setQueryText(crumbParts.slice(0, index + 1).join('/') + '/') },
-          }, part),
-        )),
-      ),
-      React.createElement('div', { className: 'atfm-viewport' },
-        browse.error !== undefined
-          ? React.createElement('div', { className: 'atfm-empty' }, browse.error)
-          : items.length === 0
-            ? React.createElement('div', { className: 'atfm-empty' }, browse.loading ? '加载中…' : '没有匹配的文件或目录')
-            : items.map((item, index) => React.createElement('button', {
-              key: item.relPath,
-              className: 'atfm-item' + (index === focus ? ' active' : ''),
-              role: 'option',
-              'aria-selected': index === focus,
-              onMouseDown: (event: { preventDefault(): void }) => {
-                event.preventDefault()
-                setFocus(index)
-                setVariant(0)
-                if (item.type === 'directory') setQueryText(item.relPath + '/')
-                else pick(item, 0)
+    const showTip = (event: { currentTarget: HTMLElement }, item: Entry): void => {
+      const rect = event.currentTarget.getBoundingClientRect()
+      const tipWidth = 240
+      let left = rect.right + 8
+      if (left + tipWidth > window.innerWidth - 8) left = rect.left - tipWidth - 8
+      let top = rect.top
+      if (top + 26 > window.innerHeight - 8) top = Math.max(8, window.innerHeight - 26 - 8)
+      setTip({ text: (item.type === 'directory' ? '📁 ' : '📄 ') + item.relPath, left, top })
+    }
+
+    return [
+      React.createElement('div', { ref: rootRef, className: 'atfm-menu', role: 'listbox', style: { left: pos !== null ? pos.left : undefined, top: pos !== null ? pos.top : undefined, maxHeight: pos !== null ? pos.maxHeight : undefined, visibility: pos !== null ? 'visible' : 'hidden' } },
+        React.createElement('div', { className: 'atfm-box' },
+          React.createElement('span', { 'aria-hidden': 'true' }, '🔍'),
+          React.createElement('input', {
+            value: queryText,
+            placeholder: '搜索文件 / 目录（递归）…',
+            'aria-label': '搜索文件或目录',
+            onChange: (event: { target: { value: string } }) => setQueryText(event.target.value),
+          }),
+        ),
+        browse.dir !== '' && React.createElement('div', { className: 'atfm-crumbs' },
+          React.createElement('button', { className: 'atfm-crumb', onMouseDown: (event: { preventDefault(): void }) => { event.preventDefault(); setQueryText('') } }, '工作目录'),
+          crumbParts.map((part, index) => React.createElement(React.Fragment, { key: index },
+            React.createElement('span', { className: 'atfm-crumb-sep' }, '/'),
+            React.createElement('button', {
+              className: 'atfm-crumb',
+              onMouseDown: (event: { preventDefault(): void }) => { event.preventDefault(); setQueryText(crumbParts.slice(0, index + 1).join('/') + '/') },
+            }, part),
+          )),
+        ),
+        React.createElement('div', { className: 'atfm-viewport' },
+          browse.error !== undefined
+            ? React.createElement('div', { className: 'atfm-empty' }, browse.error)
+            : items.length === 0
+              ? React.createElement('div', { className: 'atfm-empty' }, browse.loading ? '加载中…' : '没有匹配的文件或目录')
+              : items.map((item, index) => React.createElement('button', {
+                key: item.relPath,
+                className: 'atfm-item' + (index === focus ? ' active' : ''),
+                role: 'option',
+                'aria-selected': index === focus,
+                onMouseDown: (event: { preventDefault(): void }) => {
+                  event.preventDefault()
+                  setFocus(index)
+                  setVariant(0)
+                  if (item.type === 'directory') setQueryText(item.relPath + '/')
+                  else pick(item, 0)
+                },
+                onMouseEnter: (event: { currentTarget: HTMLElement }) => {
+                  if (index !== focus) { setFocus(index); setVariant(0) }
+                  showTip(event, item)
+                },
+                onMouseLeave: () => setTip(null),
               },
-              onMouseEnter: () => {
-                if (index !== focus) { setFocus(index); setVariant(0) }
-              },
-            },
-              React.createElement('span', { className: 'atfm-icon' }, item.type === 'directory' ? DIR_ICON : FILE_ICON),
-              React.createElement('span', { className: 'atfm-name' }, item.name + (item.type === 'directory' ? '/' : '')),
-              React.createElement('span', { className: 'atfm-desc' }, item.relPath),
-            )),
+                React.createElement('span', { className: 'atfm-icon' }, item.type === 'directory' ? DIR_ICON : FILE_ICON),
+                React.createElement('span', { className: 'atfm-name' }, item.name + (item.type === 'directory' ? '/' : '')),
+                React.createElement('span', { className: 'atfm-desc' }, item.relPath),
+              )),
+        ),
+        highlighted !== undefined && React.createElement('div', { className: 'atfm-footer' },
+          React.createElement('span', { className: 'atfm-footer-label' }, '引用（Tab 切换 / Enter 插入）：'),
+          fmtNames.map((label, index) => React.createElement('button', {
+            key: label,
+            className: 'atfm-chip' + (index === variant ? ' active' : ''),
+            title: fmtPreviews[index],
+            onMouseDown: (event: { preventDefault(): void }) => { event.preventDefault(); pick(highlighted, index) },
+          }, label)),
+        ),
       ),
-      highlighted !== undefined && React.createElement('div', { className: 'atfm-footer' },
-        React.createElement('span', { className: 'atfm-footer-label' }, '引用（Tab 切换 / Enter 插入）：'),
-        fmtNames.map((label, index) => React.createElement('button', {
-          key: label,
-          className: 'atfm-chip' + (index === variant ? ' active' : ''),
-          title: fmtPreviews[index],
-          onMouseDown: (event: { preventDefault(): void }) => { event.preventDefault(); pick(highlighted, index) },
-        }, label)),
-      ),
-    )
+      tip !== null && React.createElement('div', { className: 'atfm-tooltip', style: { left: tip.left, top: tip.top } }, tip.text),
+    ]
   }
 }
 
