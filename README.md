@@ -21,13 +21,11 @@
 
 ## ✨ 功能一览
 
-- **`@` 即呼出**：输入 `@` 弹出浮层菜单，列出当前会话**工作目录**下的子目录与文件（目录在前）
-- **🔍 搜索框**：菜单自带搜索框，按文件/目录名过滤当前层；当前层命中不足时自动在**整个工作目录内递归搜索**（深度/目录数/扫描条目数三重预算，大仓库不卡顿）
-- **↕ 层级深浅**：`→` 进入高亮目录、`←` 返回上一级；点击目录项或面包屑路径同样逐级深入
-- **⌨️ 全键盘操作**：`↑/↓` 移动高亮、`Enter` 或点击选中、`Tab` 切换引用格式、`ESC` 取消
-- **📋 多格式 snippet 引用**：选中条目后按需引用——
-  - 目录：`进入`（`@目录/`）、`路径`、`代码`（反引号）、`链接`（Markdown）
-  - 文件：`路径`、`引用`（`@路径`）、`代码`（反引号）、`链接`（Markdown）
+- **`@` 原生整合**：注册进 DSH 内置的 `@` 触发菜单，与「子智能体」「插件」分组并列在同一个原生菜单里（`文件` 分组排最前）
+- **🔍 名称搜索**：输入即按文件/目录名过滤当前层；当前层命中不足时自动在**整个工作目录内递归搜索**（深度/目录数/扫描条目数三重预算，大仓库不卡顿）
+- **🗂️ 逐级深入**：点击目录项写入 `@目录/` 继续深入，继续输入字符即列出该层内容
+- **⌨️ 原生键盘**：`↑/↓` 移动高亮、`Enter` 或点击选中、`ESC` 取消——全部由内置管线仲裁，稳定可靠
+- **🛡️ 防误发**：整行是 `@目录路径/` 时按 Enter 不会发送；目录名后按空格自动补成 `@目录/` 并展开
 - **🪝 会话感知**：工作目录跟随当前会话 `header.cwd`，菜单内容与所在目录保持一致
 
 ## 🚀 安装
@@ -96,7 +94,7 @@ npm run build          # 生成 lib/ 与 dynamic/
 src/
 ├── core/                  # 共享核心（唯一逻辑来源，零环境依赖）
 │   ├── host-core.ts       #   目录列举逻辑（服务注入；bundle 路由与动态桥共用）
-│   └── menu-core.ts       #   @ 菜单 UI（React/RPC 注入；含 buildApply）
+│   └── source-core.ts     #   @ 文件源（candidates/onPick/match*；内置菜单渲染）
 └── host/
     ├── bundle.ts          #   bundle Host 装配（webServer 路由 + 信任栅栏）
     └── dynamic.ts         #   动态 Host 装配（harness.handle 桥）
@@ -107,19 +105,20 @@ src/
 - `lib/` → **bundle 版**（`dsh plugin add`）：`index.js`（ESM Host）+ `client.js` / `client-registry.js`（module-loader factory）
 - `dynamic/` → **动态版**（`cordis_define`）：`host.js` / `client.js`（函数体，核心内联）
 
-两者只差「安装方式 + 注册周期 + 传输通道」（HTTP 路由 ↔ `harness.handle`/`host.call`），**业务逻辑与 UI 全部来自同一份 `src/core/`**。改逻辑只需改 `src/`，再 `npm run build` 两种形态同步更新。
+两者只差「安装方式 + 注册周期 + 传输通道」（HTTP 路由 ↔ `harness.handle`/`host.call`），**业务逻辑全部来自同一份 `src/core/`**（菜单渲染由 DSH 内置管线提供）。改逻辑只需改 `src/`，再 `npm run build` 两种形态同步更新。
 
 ## ⌨️ 使用速查
 
 | 按键 | 行为 |
 | --- | --- |
-| `@` | 呼出/聚焦文件菜单 |
+| `@` | 呼出原生触发菜单（`文件` / 子智能体 / 插件分组并列） |
 | 输入字符 | 按名称过滤当前层；无匹配时递归搜索 |
 | `↑` / `↓` | 移动高亮 |
-| `→` / `←` | 进入高亮目录 / 返回上一级（搜索框内光标在末尾/开头时同样生效） |
-| `Enter` | 按当前引用格式插入 |
-| `Tab` | 循环切换引用格式（路径 / @引用 / 代码 / 链接） |
-| `ESC` | 关闭菜单（关闭后只有继续打字才会重新呼出） |
+| `Enter` | 选中条目（目录 → `@目录/` 深入；文件 → 相对路径） |
+| `空格` | 目录名后按空格 → 自动补成 `@目录/` 并展开该层 |
+| `ESC` | 取消菜单 |
+
+> 点击目录项写入 `@目录/` 后继续输入字符，即可逐级进入下一层。
 
 ## 📂 结构
 
@@ -133,7 +132,7 @@ dsh-plugin-chat-menu/
 ├── dsh.plugin.json      # 插件注册表清单（id / client.main）
 ├── cordis.patch.yml     # bundle 挂载补丁（dsh plugin add 自动注册）
 ├── src/                 # ★ 单一 TypeScript 源码
-│   ├── core/            #   共享核心（host-core.ts 列举逻辑 / menu-core.ts 菜单 UI）
+│   ├── core/            #   共享核心（host-core.ts 列举逻辑 / source-core.ts @ 源）
 │   └── host/            #   装配（bundle.ts 路由 / dynamic.ts 动态桥）
 ├── dynamic/             # 构建产物（npm run build 生成，不入库）：动态函数体
 ├── scripts/
@@ -147,7 +146,7 @@ dsh-plugin-chat-menu/
 ```
 
 - `src/core/host-core.ts` — 入参 `{ sessionId, path, filter }`：`path` 逐段解析真实目录（先精确、后忽略大小写），`filter` 名称过滤；工作目录取会话 `header.cwd`，缺失回退 `sandboxPolicy.workspaceRoot`。
-- `src/core/menu-core.ts` — `@token` 检测复用内置触发器词边界规则；菜单的打开/关闭只由**草稿文本变化**驱动，`ESC` 关闭后光标/keyup/点击不会把它弹回；选中后经 `inputActions.setDraft` 替换 token。
+- `src/core/source-core.ts` — 注册 `@` 文件源：`candidates(query)` 名称搜索 + 递归、`onPick` 写入路径/`@目录/`、`matchSpace`/`matchEnter` 防误发；菜单渲染与键盘仲裁由 DSH 内置 `inputTriggers` 管线提供。
 
 ## 📝 License
 
