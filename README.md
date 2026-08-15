@@ -32,9 +32,25 @@
 
 ## 🚀 安装
 
-**前置**：已装好 DSH（`dsh web` 能正常运行）。
+**前置**：已装好 DSH（`dsh web` 能正常运行），Node.js ≥ 20。
 
-### 官方 CLI（npm 包发布后即生效）
+### 一键脚本
+
+**macOS / Linux**（Windows 装了 Git Bash 或 WSL 也可）：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ChocoLZS/dsh-plugin-chat-menu/main/scripts/install.sh | bash
+```
+
+**Windows（PowerShell 5.1+ / pwsh）**：
+
+```powershell
+irm https://raw.githubusercontent.com/ChocoLZS/dsh-plugin-chat-menu/main/scripts/install.ps1 | iex
+```
+
+装完**重启 DSH 并硬刷新浏览器**（Cmd/Ctrl+Shift+R）即可看到 `@` 文件菜单。
+
+### 手动安装（dsh 官方 CLI）
 
 ```sh
 dsh plugin --profile web add dsh-plugin-chat-menu
@@ -46,16 +62,18 @@ dsh plugin --profile web add dsh-plugin-chat-menu
 npx -y --package @deepseek-ai/dsh dsh plugin --profile web add dsh-plugin-chat-menu
 ```
 
-> `dsh plugin` 会登记依赖、识别包内 `dsh.bundle.patch` 并自动写入 `dsh.profile.bundles` 完成挂载；装完**硬刷新浏览器**（Cmd/Ctrl+Shift+R）即可使用（client 改动热加载，仅 host 半更新需要重启 DSH）。
+> `dsh plugin` 会登记依赖、识别包内 `dsh.bundle.patch`（`cordis.patch.yml`）并自动写入 `dsh.profile.bundles` 完成挂载——不修改 DSH 源码，插件作为独立包被 profile 引用。
 
-### 动态装载（当前源码形态，开箱即用）
+### 本地开发
 
-插件当前以**动态 Cordis 插件**运行，通过会话内的动态插件工具装载：
+```sh
+npm run build          # 生成 lib/（host 半 + 浏览器 bundle）
+dsh plugin --profile web add "file:$(pwd)"
+```
 
-1. `cordis_define`：`idPrefix: atfile`；`code.host` / `code.client` 分别取本仓库 `host.js` / `client.js` 的函数体；
-2. `cordis_run`：首次 `run` 激活（浏览器半首次需批准），后续改版用 `update` 更新同一 pluginId。
+更新：修改 `src/` 后重新 `npm run build`，再执行一次上面的 `dsh plugin add`。
 
-> 动态插件随 DSH 进程重启而清空，重启后按上述两步重新装载即可；源码即本仓库。
+> 卸载：`dsh plugin --profile web remove dsh-plugin-chat-menu`。
 
 ## ⌨️ 使用速查
 
@@ -76,12 +94,24 @@ dsh-plugin-chat-menu/
 ├── README.md            # 本文件
 ├── AGENTS.md            # dsh-plugin-* 仓库族约定（agent 开发必读）
 ├── LICENSE              # MIT
-├── host.js              # Host 半：fsmenu/list RPC（目录解析、名称过滤、递归搜索）
-└── client.js            # 浏览器半：conversation.input.overlay 自绘浮层
+├── package.json         # npm 包清单（dsh.bundle.patch / dsh.client 声明）
+├── dsh.plugin.json      # 插件注册表清单（id / client.main）
+├── cordis.patch.yml     # bundle 挂载补丁（dsh plugin add 自动注册）
+├── src/
+│   ├── host.js          #   Host 半：/chat-menu/list 路由（目录解析、名称过滤、递归搜索）
+│   └── client.js        #   浏览器半：module-loader bundle（@ 浮层菜单）
+├── scripts/
+│   ├── build.mjs        #   构建 lib/（替换 __CLIENT_ID__，产出双通道 bundle）
+│   ├── install.sh       #   一键安装（macOS / Linux / Git Bash）
+│   └── install.ps1      #   一键安装（Windows PowerShell）
+└── lib/                 # 构建产物（npm run build 生成，不入库）
+    ├── index.js
+    ├── client.js
+    └── client-registry.js
 ```
 
-- `host.js` — 入参 `{ sessionId, path, filter }`：`path` 逐段解析真实目录（先精确、后忽略大小写），`filter` 名称过滤；工作目录取会话 `header.cwd`，缺失回退 `sandboxPolicy.workspaceRoot`。
-- `client.js` — `@token` 检测复用内置触发器词边界规则；菜单的打开/关闭只由**草稿文本变化**驱动，`ESC` 关闭后光标/keyup/点击不会把它弹回；选中后经 `inputActions.setDraft` 替换 token。
+- `src/host.js` — 入参 `{ sessionId, path, filter }`：`path` 逐段解析真实目录（先精确、后忽略大小写），`filter` 名称过滤；工作目录取会话 `header.cwd`，缺失回退 `sandboxPolicy.workspaceRoot`；仅响应回环/同源请求。
+- `src/client.js` — `@token` 检测复用内置触发器词边界规则；菜单的打开/关闭只由**草稿文本变化**驱动，`ESC` 关闭后光标/keyup/点击不会把它弹回；选中后经 `inputActions.setDraft` 替换 token；Host RPC 走本插件自己的 `/chat-menu/list` 路由。
 
 ## 📝 License
 

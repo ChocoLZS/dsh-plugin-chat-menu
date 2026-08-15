@@ -1,0 +1,52 @@
+{
+  "name": "dsh-plugin-chat-menu",
+  "version": "0.1.0",
+  "description": "在 DSH 会话输入框输入 @ 呼出工作目录文件浏览菜单：搜索、递归查找、逐级深入、多格式 snippet 引用",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "src",
+    "scripts",
+    "cordis.patch.yml",
+    "dsh.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-harness",
+    "dsh-plugin",
+    "deepseek-harness",
+    "chat-menu",
+    "file-menu",
+    "@menu"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "platform": "web"
+    }
+  }
+}

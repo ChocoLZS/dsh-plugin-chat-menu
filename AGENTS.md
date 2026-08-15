@@ -31,20 +31,21 @@ dsh-plugin-chat-menu/
 └── client.js            # 浏览器半（函数体，return 插件对象）
 ```
 
-## 插件开发规则（DSH 动态 Cordis 插件）
+## 插件开发规则（DSH bundle 插件）
 
-- **纯 JavaScript 函数体**：`host.js` / `client.js` 各是一个函数体，以 `return { ... }` 结尾；禁止 `import` / `require` / TypeScript / JSX。
-- **Host 半**：通过 `ctx.get(name)` 读服务（判空处理）；用 `harness.handle(method, handler)` 注册 Client→Host 的 JSON RPC；handler 返回 JSON 兼容值。
-- **浏览器半**：`React` 以闭包符号注入，UI 必须用 `React.createElement(...)`；样式用 `styles.insert(css)` 注入（卸载自动清理）。
-- **副作用可回收**：事件监听、定时器、注册项都必须挂在插件 Fiber 上（`ctx.effect` / 组件 `useEffect` 清理），插件 stop/update 后不留残留。
+- **Host 半（`src/host.js`）**：ESM 模块，命名导出 `name` / `inject` / `apply`（函数插件形态）。跨端 RPC 用 `webServer` 路由（如 `/chat-menu/list`），客户端 `fetch` 调用；只响应回环/同源请求。
+- **浏览器半（`src/client.js`）**：`window.__ModuleLoader__.load({ id, factory })` CJS 闭包工厂；`require('react')` 经模块表解析；`module.exports = { name, inject, apply }`。UI 用 `React.createElement`，样式在工厂内以 `<style data-plugin-css>` 注入（幂等）。
+- **构建**：`npm run build`（`scripts/build.mjs`）产出 `lib/`——host 直拷，浏览器半替换 `__CLIENT_ID__` 生成 `lib/client.js`（官方通道）与 `lib/client-registry.js`（注册表通道）。
+- **副作用可回收**：事件监听、路由注册等一律挂插件 Fiber（`ctx.effect` / 组件 `useEffect`），stop/update 后不留残留。
 - **UI 位置**：输入区浮层类 UI 注册在 `conversation.input.overlay` 槽位（先 `cordis_inspect_query` 确认槽位契约）。
-- **升级**：`cordis_define`（kind `existing`，同一 pluginId）追加不可变 Package → `cordis_run` mode `update`。
 
-## 装载流程
+## 装载流程（官方 CLI）
 
-1. `cordis_define`：`idPrefix` 为 3–6 位小写字母；`code.host` / `code.client` 取对应文件函数体；
-2. `cordis_run`：首次 `run`，改版 `update`；
-3. 浏览器半首次激活需要批准；批准策略由会话侧控制。
+1. `npm run build` 生成 `lib/`；
+2. `dsh plugin --profile <name> add dsh-plugin-chat-menu`（或 `file:<仓库路径>` 本地安装）——CLI 识别包内 `dsh.bundle.patch`（`cordis.patch.yml`），自动写入 `dsh.profile.bundles` 完成挂载；
+3. 重启 DSH（host 半是启动期组合）并硬刷新浏览器生效。
+
+一键安装脚本：`scripts/install.sh`（macOS/Linux）/ `scripts/install.ps1`（Windows）。发布到 npm 前，脚本与 CLI 命令需要先 `npm publish`。
 
 ## 仓库纪律
 

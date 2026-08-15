@@ -1,0 +1,16 @@
+{
+  "id": "dsh-external/dsh-plugin-chat-menu",
+  "version": "0.1.0",
+  "main": "./lib/index.js",
+  "description": "在 DSH 会话输入框输入 @ 呼出工作目录文件浏览菜单：搜索、递归查找、逐级深入、多格式 snippet 引用",
+  "engines": {
+    "dsh": ">=0.0.1"
+  },
+  "contributes": {
+    "tools": [],
+    "skills": []
+  },
+  "client": {
+    "main": "./lib/client-registry.js"
+  }
+}

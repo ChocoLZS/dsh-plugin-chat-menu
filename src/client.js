@@ -1,20 +1,25 @@
 /**
- * @ 文件目录引用菜单 — 浏览器半（v2 自绘浮层）
- * 输入 @ 呼出浮层菜单：顶部搜索框（递归搜索）、面包屑、条目列表；
- * ↑/↓ 移动高亮、→ 进入高亮目录、← 返回上一级、Enter/点击 选中、ESC 取消；
- * 底部 snippet 栏：Tab 切换引用方式（路径 / @引用 / 代码 / Markdown 链接），Enter 插入。
- * 层级深浅由浮层内部状态管理，选中文件时把 snippet 文本替换输入框里的 @token。
+ * dsh-plugin-chat-menu browser half: module-loader bundle source.
+ *
+ * scripts/build.mjs replaces the __CLIENT_ID__ placeholder and writes two
+ * artifacts with identical content but different registered ids:
+ *   - lib/client.js          id "dsh-plugin-chat-menu"            (official profile channel)
+ *   - lib/client-registry.js id "dsh-external/dsh-plugin-chat-menu" (plugin-registry channel)
+ *
+ * The bundle registers itself via window.__ModuleLoader__.load({ id, factory })
+ * with the CJS closure factory shape the web shell expects; React resolves
+ * through the module table (a seeded platform module). Host RPC rides the
+ * plugin's own /chat-menu/list HTTP route instead of a dynamic-plugin bridge.
  */
-return {
-  name: 'at-file-menu-client',
-  apply(ctx) {
-    const slots = ctx.get('slots')
-    if (slots === undefined) {
-      console.error('at-file-menu: slots service unavailable')
-      return
-    }
+window.__ModuleLoader__.load({
+  id: __CLIENT_ID__,
+  factory: (require) => {
+    var module = { exports: {} }
+    var exports = module.exports
+    const React = require('react')
 
-    styles.insert(`
+    // Style injection (idempotent; the same shape official bundles emit).
+    const ATFM_CSS = `
 .atfm-menu{position:absolute;bottom:calc(100% + 4px);left:0;z-index:150;width:560px;max-width:calc(100vw - 32px);max-height:400px;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu);box-shadow:var(--dsw-shadow-lv3);border-radius:12px;padding:4px;overflow:hidden;font-size:13px;line-height:20px}
 .atfm-box{display:flex;align-items:center;gap:6px;margin:2px 2px 6px;padding:0 8px;border:1px solid var(--dsw-alias-border-inverted);border-radius:8px}
 .atfm-box input{flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--dsw-alias-label-primary);padding:7px 0;font-size:13px}
@@ -33,13 +38,29 @@ return {
 .atfm-footer-label{color:var(--dsw-alias-label-dimmed);font-size:12px}
 .atfm-chip{cursor:pointer;border:1px solid var(--dsw-alias-border-inverted);background:transparent;color:var(--dsw-alias-label-tertiary);padding:3px 8px;border-radius:999px;font-size:12px}
 .atfm-chip:hover,.atfm-chip.active{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-`)
+`
+    const ATFM_STYLE_ID = 'dsh-plugin-chat-menu/atfm.css'
+    if (typeof document !== 'undefined'
+      && document.querySelector('style[data-plugin-css=' + JSON.stringify(ATFM_STYLE_ID) + ']') === null) {
+      const tag = document.createElement('style')
+      tag.dataset.plugin = 'dsh-plugin-chat-menu'
+      tag.dataset.pluginCss = ATFM_STYLE_ID
+      tag.textContent = ATFM_CSS
+      document.head.appendChild(tag)
+    }
+
+    // Host RPC: the plugin's own /chat-menu/list HTTP route.
+    async function fsmenuList(sessionId, path, filter) {
+      const params = new URLSearchParams({ sessionId, path, filter })
+      const res = await fetch('/chat-menu/list?' + params.toString())
+      return res.json()
+    }
 
     const DIR_ICON = '📁'
     const FILE_ICON = '📄'
     const MAX_ITEMS = 50
 
-    // 从 draft 与光标位置检测 @token（与内置触发器的词边界规则一致）
+    // Detect the @token from draft + caret (same word-boundary rule as the built-in trigger).
     function detectAt(draft, caret) {
       for (let i = caret - 1; i >= 0; i--) {
         const ch = draft.charAt(i)
@@ -53,7 +74,7 @@ return {
       return null
     }
 
-    // 搜索文本 = 路径前缀（最后一个 '/' 之前）+ 名称过滤（之后）
+    // Query text = path prefix (before the last '/') + name filter (after it).
     function parseQuery(queryText) {
       const at = queryText.lastIndexOf('/')
       if (at < 0) return { path: '', filter: queryText }
@@ -64,7 +85,7 @@ return {
       return /[\s"]/.test(relPath) ? '"' + relPath + '"' : relPath
     }
 
-    // 每个条目的 snippet 引用方式（目录默认「进入」，文件默认「路径」）
+    // Per-entry snippet formats (dir default「进入」, file default「路径」).
     function formatsFor(item) {
       if (item.type === 'directory') {
         return [
@@ -117,7 +138,7 @@ return {
         })
       }, [])
 
-      // 搜索文本变化 → 请求 Host 列出当前层 + 递归搜索
+      // Query change → list the current level (+ recursive search) via the host route.
       React.useEffect(() => {
         if (hit === null) return
         const { path, filter } = parseQuery(queryText)
@@ -125,7 +146,7 @@ return {
         setBrowse((prev) => ({ ...prev, loading: true }))
         const run = async () => {
           try {
-            const result = await host.call('fsmenu/list', { sessionId: props.sessionId, path, filter })
+            const result = await fsmenuList(props.sessionId, path, filter)
             if (seqRef.current !== seq) return
             if (result === null || typeof result !== 'object' || result.error !== undefined) {
               const message = result !== null && result.error === 'no-workspace' ? '当前会话没有工作目录' : '目录读取失败'
@@ -148,7 +169,7 @@ return {
             setVariant(0)
           } catch (error) {
             if (seqRef.current !== seq) return
-            console.error('at-file-menu: list failed:', error)
+            console.error('chat-menu: list failed:', error)
             setBrowse({ dir: '', items: [], loading: false, error: '菜单加载失败' })
           }
         }
@@ -377,9 +398,19 @@ return {
       )
     }
 
-    slots.inject('conversation.input.overlay', () => slots.register(
-      { name: 'conversation.input.overlay', id: 'at-file-menu', order: 2, label: '文件目录菜单' },
-      FileMenu,
-    ))
+    const apply = (ctx) => {
+      const slots = ctx.get('slots')
+      if (slots === undefined) {
+        console.error('chat-menu: slots service unavailable')
+        return
+      }
+      slots.inject('conversation.input.overlay', () => slots.register(
+        { name: 'conversation.input.overlay', id: 'chat-menu', order: 2, label: '文件目录菜单' },
+        FileMenu,
+      ))
+    }
+
+    module.exports = { name: 'dsh-plugin-chat-menu', inject: ['slots'], apply }
+    return module.exports
   },
-}
+})
