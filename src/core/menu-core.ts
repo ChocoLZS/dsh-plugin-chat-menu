@@ -40,7 +40,7 @@ export const ATFM_CSS = `
 .atfm-footer-label{color:var(--dsw-alias-label-dimmed);font-size:12px}
 .atfm-chip{cursor:pointer;border:1px solid var(--dsw-alias-border-inverted);background:transparent;color:var(--dsw-alias-label-tertiary);padding:3px 8px;border-radius:999px;font-size:12px}
 .atfm-chip:hover,.atfm-chip.active{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.atfm-tooltip{position:fixed;z-index:200;max-width:min(480px,60vw);padding:4px 10px;border:1px solid var(--dsw-alias-border-inverted);border-radius:8px;background:var(--dsw-specific-tooltip,var(--dsw-specific-menu));color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-shadow-lv3);font-size:12px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+.atfm-tooltip{position:fixed;z-index:300;max-width:min(480px,60vw);padding:4px 10px;border:1px solid var(--dsw-alias-border-inverted);border-radius:8px;background:var(--dsw-specific-tooltip,var(--dsw-specific-menu));color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-shadow-lv3);font-size:12px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
 `
 
 /** Inject the menu stylesheet once (idempotent; works in both bundle and dynamic environments). */
@@ -96,8 +96,8 @@ function quoteIfNeeded(relPath: string): string {
  * content coordinates, then translated to the textarea's true viewport
  * position: textarea rect + marker offset − scroll offset.
  */
-function caretViewportRect(textarea: HTMLTextAreaElement): { left: number; top: number; height: number } {
-  const pos = textarea.selectionStart ?? textarea.value.length
+function caretViewportRect(textarea: HTMLTextAreaElement, posOverride?: number): { left: number; top: number; height: number } {
+  const pos = posOverride ?? textarea.selectionStart ?? textarea.value.length
   const style = getComputedStyle(textarea)
   const mirror = document.createElement('div')
   const props = [
@@ -179,10 +179,28 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
     const pickRef = React.useRef<((item: Entry, variantIndex: number) => void) | null>(null)
     const lastDraftRef = React.useRef<string | null>(null)
     const [pos, setPos] = React.useState<{ left: number | undefined; top: number | undefined; maxHeight: number; maxWidth: number } | null>(null)
-    const [tip, setTip] = React.useState<{ text: string; left: number; top: number } | null>(null)
+    // tooltip 用独立 DOM 元素直接挂到 document.body（在菜单外），避免被菜单遮挡/裁剪
+    const tooltipElRef = React.useRef<HTMLDivElement | null>(null)
     hitRef.current = hit
+
+    const hideTip = (): void => {
+      const el = tooltipElRef.current
+      if (el !== null) el.style.display = 'none'
+    }
+    const ensureTipEl = (): HTMLDivElement => {
+      let el = tooltipElRef.current
+      if (el === null) {
+        el = document.createElement('div')
+        el.className = 'atfm-tooltip'
+        document.body.appendChild(el)
+        tooltipElRef.current = el
+      }
+      return el
+    }
+
     const close = React.useCallback(() => {
       const wasOpen = hitRef.current !== null
+      hideTip()
       setHit(null)
       if (!wasOpen) return
       // 关闭后向输入框补发 Escape，让内置提及菜单同步收起（避免其残留影响 Enter）
@@ -357,14 +375,15 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
     React.useEffect(() => {
       if (hit === null) return
       const layout = (): void => {
-        setTip(null)
+        hideTip()
         const active = document.activeElement
         if (!(active instanceof HTMLTextAreaElement)) return
         const anchor = rootRef.current !== null && rootRef.current.offsetParent instanceof HTMLElement
           ? rootRef.current.offsetParent
           : null
         const anchorRect = anchor !== null ? anchor.getBoundingClientRect() : null
-        const caret = caretViewportRect(active)
+        // 左缘对齐 @ 符号右缘：测量 @ 字符之后（start+1）的位置
+        const caret = caretViewportRect(active, hit.start + 1)
         const margin = 8
         // 高度上限：不超过 400px（配合 .atfm-viewport 内部滚动），同时不超过视口
         const maxMenuHeight = Math.min(400, Math.max(160, window.innerHeight - margin * 2))
@@ -456,7 +475,7 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
     const fmtPreviews = highlighted !== undefined ? formatsFor(highlighted) : []
 
     const showTip = (event: { clientX: number; clientY: number }, item: Entry): void => {
-      // tooltip 跟随鼠标位置弹出，带小偏移避免盖住光标；越界时翻到另一侧
+      // tooltip 是 document.body 上的独立元素（菜单外），跟随鼠标位置弹出，带小偏移避免盖住光标；越界时翻到另一侧
       const tipWidth = 240
       const tipHeight = 26
       const gap = 14
@@ -464,11 +483,21 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
       if (left + tipWidth > window.innerWidth - 8) left = Math.max(8, event.clientX - tipWidth - gap)
       let top = event.clientY + gap
       if (top + tipHeight > window.innerHeight - 8) top = Math.max(8, event.clientY - tipHeight - gap)
-      setTip({ text: (item.type === 'directory' ? '📁 ' : '📄 ') + item.relPath, left, top })
+      const el = ensureTipEl()
+      el.textContent = (item.type === 'directory' ? '📁 ' : '📄 ') + item.relPath
+      el.style.left = left + 'px'
+      el.style.top = top + 'px'
+      el.style.display = 'block'
     }
 
-    return [
-      React.createElement('div', { ref: rootRef, className: 'atfm-menu', role: 'listbox', style: { left: pos !== null ? pos.left : undefined, top: pos !== null ? pos.top : undefined, maxHeight: pos !== null ? pos.maxHeight : undefined, maxWidth: pos !== null ? pos.maxWidth : undefined, visibility: pos !== null ? 'visible' : 'hidden' } },
+    // 组件卸载时移除挂到 body 的 tooltip 元素
+    React.useEffect(() => () => {
+      const el = tooltipElRef.current
+      if (el !== null && el.parentNode !== null) el.parentNode.removeChild(el)
+      tooltipElRef.current = null
+    }, [])
+
+    return React.createElement('div', { ref: rootRef, className: 'atfm-menu', role: 'listbox', style: { left: pos !== null ? pos.left : undefined, top: pos !== null ? pos.top : undefined, maxHeight: pos !== null ? pos.maxHeight : undefined, maxWidth: pos !== null ? pos.maxWidth : undefined, visibility: pos !== null ? 'visible' : 'hidden' } },
         React.createElement('div', { className: 'atfm-box' },
           React.createElement('span', { 'aria-hidden': 'true' }, '🔍'),
           React.createElement('input', {
@@ -510,7 +539,7 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
                   showTip(event, item)
                 },
                 onMouseMove: (event: { clientX: number; clientY: number }) => showTip(event, item),
-                onMouseLeave: () => setTip(null),
+                onMouseLeave: () => hideTip(),
               },
                 React.createElement('span', { className: 'atfm-icon' }, item.type === 'directory' ? DIR_ICON : FILE_ICON),
                 React.createElement('span', { className: 'atfm-name' }, item.name + (item.type === 'directory' ? '/' : '')),
@@ -526,11 +555,9 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
             onMouseDown: (event: { preventDefault(): void }) => { event.preventDefault(); pick(highlighted, index) },
           }, label)),
         ),
-      ),
-      tip !== null && React.createElement('div', { className: 'atfm-tooltip', style: { left: tip.left, top: tip.top } }, tip.text),
-    ]
+      )
+    }
   }
-}
 
 /**
  * The plugin apply shared by both forms: registers the overlay with the
