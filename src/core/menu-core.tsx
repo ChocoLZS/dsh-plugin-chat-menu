@@ -457,6 +457,14 @@ export function createMenu(deps: { React: typeof React; list: ListFn }): (props:
     }, [draft, props, close])
     pickRef.current = pick
 
+    // 组件卸载时移除挂到 body 的 tooltip 元素（必须与其它 hooks 一样无条件调用，
+    // 不能放在 if (hit === null) return null 之后，否则 hooks 数量会随开关变化）
+    React.useEffect(() => () => {
+      const el = tooltipElRef.current
+      if (el !== null && el.parentNode !== null) el.parentNode.removeChild(el)
+      tooltipElRef.current = null
+    }, [])
+
     if (hit === null) return null
 
     const items = browse.items
@@ -482,13 +490,6 @@ export function createMenu(deps: { React: typeof React; list: ListFn }): (props:
       el.style.top = top + 'px'
       el.style.display = 'block'
     }
-
-    // 组件卸载时移除挂到 body 的 tooltip 元素
-    React.useEffect(() => () => {
-      const el = tooltipElRef.current
-      if (el !== null && el.parentNode !== null) el.parentNode.removeChild(el)
-      tooltipElRef.current = null
-    }, [])
 
     return (
       <div ref={rootRef} className="atfm-menu" role="listbox" style={{
