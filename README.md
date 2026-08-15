@@ -75,6 +75,15 @@ dsh plugin --profile web add "file:$(pwd)"
 
 > 卸载：`dsh plugin --profile web remove dsh-plugin-chat-menu`。
 
+### 动态插件（未发布 npm 时，快速使用 / 调试）
+
+chat-menu 同时提供**动态 Cordis 插件**形态（`dynamic/` 目录，函数体源码，无需 npm 发布）：
+
+1. `cordis_define`：`idPrefix: atfile`；`code.host` / `code.client` 分别取 `dynamic/host.js` / `dynamic/client.js` 的函数体；
+2. `cordis_run`：首次 `run` 激活（浏览器半首次需批准），改版 `update` 同一 pluginId。
+
+> ⚠️ 动态插件随 DSH 进程重启而清空，重启后需重新装载。**同一时间只装一种形态**：动态版与 bundle 版都会注册 `@` 文件菜单，同时运行会出现两个菜单——装 bundle 版就不要加载动态版（反之亦然）。
+
 ## ⌨️ 使用速查
 
 | 按键 | 行为 |
@@ -100,6 +109,10 @@ dsh-plugin-chat-menu/
 ├── src/
 │   ├── host.js          #   Host 半：/chat-menu/list 路由（目录解析、名称过滤、递归搜索）
 │   └── client.js        #   浏览器半：module-loader bundle（@ 浮层菜单）
+├── dynamic/
+│   ├── host.js          #   动态插件形态 Host 半（harness.handle，未发布 npm 时使用）
+│   ├── client.js        #   动态插件形态浏览器半（闭包符号）
+│   └── README.md        #   动态装载说明
 ├── scripts/
 │   ├── build.mjs        #   构建 lib/（替换 __CLIENT_ID__，产出双通道 bundle）
 │   ├── install.sh       #   一键安装（macOS / Linux / Git Bash）

@@ -17,18 +17,22 @@ dsh-plugins/
 ├── AGENTS.md            # 仓库族约定（每个子目录仓库内也保留一份）
 ├── chat-menu/           # ← 独立 git 仓库 → GitHub: dsh-plugin-chat-menu
 │   ├── README.md
-│   ├── host.js
-│   └── client.js
+│   ├── package.json     # bundle 包清单
+│   ├── src/             # bundle 版源码
+│   └── dynamic/         # 动态插件形态（函数体）
 └── <other-plugin>/      # ← 独立 git 仓库 → GitHub: dsh-plugin-<other-plugin>
 ```
 
 ```
 # 本仓库（GitHub: dsh-plugin-chat-menu）
 dsh-plugin-chat-menu/
-├── README.md            # 插件说明（功能、装载、结构）
+├── README.md            # 插件说明（功能、两种安装方式、结构）
 ├── AGENTS.md            # 本文件：仓库族约定
-├── host.js              # Host 半（函数体，return 插件对象）
-└── client.js            # 浏览器半（函数体，return 插件对象）
+├── package.json         # npm 包清单（dsh.bundle.patch / dsh.client）
+├── cordis.patch.yml     # bundle 挂载补丁
+├── src/                 # bundle 版源码（host.js / client.js）
+├── dynamic/             # 动态插件形态（host.js / client.js / README.md）
+└── scripts/             # build.mjs / install.sh / install.ps1
 ```
 
 ## 插件开发规则（DSH bundle 插件）
@@ -39,13 +43,25 @@ dsh-plugin-chat-menu/
 - **副作用可回收**：事件监听、路由注册等一律挂插件 Fiber（`ctx.effect` / 组件 `useEffect`），stop/update 后不留残留。
 - **UI 位置**：输入区浮层类 UI 注册在 `conversation.input.overlay` 槽位（先 `cordis_inspect_query` 确认槽位契约）。
 
-## 装载流程（官方 CLI）
+## 动态插件形态（`dynamic/`）
+
+`dynamic/host.js` / `dynamic/client.js` 是同一插件的**动态 Cordis 插件**函数体形态（`return { name, apply }`），通过会话内工具装载（`cordis_define` + `cordis_run`），适合未发布 npm 时使用/调试：
+
+- Host 半用 `harness.handle` 注册 RPC；浏览器半用闭包符号（`React` / `styles` / `host`）。
+- 两种形态功能一致，**同一时间只装一种**（都注册 `@` 文件菜单；bundle 版 overlay id `chat-menu`，动态版 `at-file-menu`）。
+- 动态版随进程重启清空，需要重新装载。
+
+## 装载流程
+
+**bundle 版（正式安装）**：
 
 1. `npm run build` 生成 `lib/`；
 2. `dsh plugin --profile <name> add dsh-plugin-chat-menu`（或 `file:<仓库路径>` 本地安装）——CLI 识别包内 `dsh.bundle.patch`（`cordis.patch.yml`），自动写入 `dsh.profile.bundles` 完成挂载；
 3. 重启 DSH（host 半是启动期组合）并硬刷新浏览器生效。
 
 一键安装脚本：`scripts/install.sh`（macOS/Linux）/ `scripts/install.ps1`（Windows）。发布到 npm 前，脚本与 CLI 命令需要先 `npm publish`。
+
+**动态版（未发布 npm / 调试）**：`cordis_define`（`idPrefix: atfile`，code 取 `dynamic/` 下函数体）→ `cordis_run`（首次 `run`，改版 `update`）。
 
 ## 仓库纪律
 
