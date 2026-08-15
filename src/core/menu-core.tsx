@@ -1,20 +1,15 @@
 /**
- * Shared @-menu UI core — the SINGLE source for both the bundle form
+ * Shared @-menu UI core (TSX) — the SINGLE source for both the bundle form
  * (module-loader factory in scripts/build.mjs) and the dynamic form
  * (function body). React and the directory-listing RPC are injected so the
  * core stays import-free and environment-agnostic; scripts/build.mjs bundles
- * it into either artifact unchanged.
+ * it into either artifact unchanged. JSX compiles with the classic runtime
+ * (`React.createElement`), and the injected `React` is in scope inside
+ * `createMenu`, so both the module-loader bundle and the dynamic closure
+ * resolve it without any import.
  */
 
-/** The React surface the component needs (typed loosely; no @types/react). */
-export interface ReactLike {
-  createElement: (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) => unknown
-  Fragment: unknown
-  useState: <T>(initial: T | (() => T)) => [T, (next: T | ((prev: T) => T)) => void]
-  useEffect: (effect: () => void | (() => void), deps?: readonly unknown[]) => void
-  useRef: <T>(initial: T) => { current: T }
-  useCallback: <T extends (...args: never[]) => unknown>(fn: T, deps: readonly unknown[]) => T
-}
+import type * as React from 'react'
 
 /** One directory-listing RPC: (sessionId, path, filter) → host JSON result. */
 export type ListFn = (sessionId: string, path: string, filter: string) => Promise<Record<string, unknown>>
@@ -91,10 +86,9 @@ function quoteIfNeeded(relPath: string): string {
 }
 
 /**
- * Measure the caret's viewport rectangle inside a textarea via an off-screen
- * mirror with the same metrics. The marker rect is read in the mirror's
- * content coordinates, then translated to the textarea's true viewport
- * position: textarea rect + marker offset − scroll offset.
+ * Measure a text position's viewport rectangle inside a textarea via an
+ * off-screen mirror with the same metrics. `posOverride` measures a specific
+ * offset (e.g. the @ symbol's right edge) instead of the caret.
  */
 function caretViewportRect(textarea: HTMLTextAreaElement, posOverride?: number): { left: number; top: number; height: number } {
   const pos = posOverride ?? textarea.selectionStart ?? textarea.value.length
@@ -158,10 +152,10 @@ interface MenuProps {
 }
 
 /** Build the FileMenu component with the injected React + listing RPC. */
-export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: MenuProps) => unknown {
+export function createMenu(deps: { React: typeof React; list: ListFn }): (props: MenuProps) => React.ReactNode {
   const { React, list } = deps
 
-  return function FileMenu(props: MenuProps): unknown {
+  return function FileMenu(props: MenuProps): React.ReactNode {
     const draft = props.useInput((state) => state.draft)
     const [hit, setHit] = React.useState<{ start: number; end: number } | null>(null)
     const [queryText, setQueryText] = React.useState('')
@@ -173,7 +167,7 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
     }>({ dir: '', items: [], loading: false })
     const [focus, setFocus] = React.useState(-1)
     const [variant, setVariant] = React.useState(0)
-    const rootRef = React.useRef<HTMLElement | null>(null)
+    const rootRef = React.useRef<HTMLDivElement | null>(null)
     const seqRef = React.useRef(0)
     const hitRef = React.useRef<{ start: number; end: number } | null>(null)
     const pickRef = React.useRef<((item: Entry, variantIndex: number) => void) | null>(null)
@@ -370,7 +364,7 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
     }, [hit === null, browse, focus, variant, close])
 
     // 菜单定位：基于输入框里的 @ 光标（absolute 相对锚点容器，兼容变换祖先环境），
-    // 左缘对齐光标（@ 右侧）、优先在光标上方；高度封顶（视口内滚动）；
+    // 左缘对齐 @ 符号右缘、优先在光标上方；高度封顶（视口内滚动）；
     // 找不到定位祖先时退回对话框锚定（CSS bottom:100%+4px left:0）。
     React.useEffect(() => {
       if (hit === null) return
@@ -392,8 +386,7 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
         let top = caret.top - menuHeight - 6
         if (top < margin) top = caret.top + caret.height + 6
         top = Math.max(margin, Math.min(top, window.innerHeight - margin - Math.min(measured || 320, maxMenuHeight)))
-        // 水平：左缘对齐光标（在 @ 右侧弹出）；宽度不超过光标右侧可用空间（下限 240px）。
-        // 仅当右侧连 240px 都没有时才回退为视口内钳制（不向左越出 @）。
+        // 水平：左缘对齐 @ 右缘；宽度不超过右侧可用空间（下限 240px）。仅当右侧不足才回退视口内钳制。
         const availRight = window.innerWidth - caret.left - margin
         let left = caret.left
         let maxWidth = Math.min(560, Math.max(240, availRight))
@@ -497,73 +490,92 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
       tooltipElRef.current = null
     }, [])
 
-    return React.createElement('div', { ref: rootRef, className: 'atfm-menu', role: 'listbox', style: { left: pos !== null ? pos.left : undefined, top: pos !== null ? pos.top : undefined, maxHeight: pos !== null ? pos.maxHeight : undefined, maxWidth: pos !== null ? pos.maxWidth : undefined, visibility: pos !== null ? 'visible' : 'hidden' } },
-        React.createElement('div', { className: 'atfm-box' },
-          React.createElement('span', { 'aria-hidden': 'true' }, '🔍'),
-          React.createElement('input', {
-            value: queryText,
-            placeholder: '搜索文件 / 目录（递归）…',
-            'aria-label': '搜索文件或目录',
-            onChange: (event: { target: { value: string } }) => setQueryText(event.target.value),
-          }),
-        ),
-        browse.dir !== '' && React.createElement('div', { className: 'atfm-crumbs' },
-          React.createElement('button', { className: 'atfm-crumb', onMouseDown: (event: { preventDefault(): void }) => { event.preventDefault(); setQueryText('') } }, '工作目录'),
-          crumbParts.map((part, index) => React.createElement(React.Fragment, { key: index },
-            React.createElement('span', { className: 'atfm-crumb-sep' }, '/'),
-            React.createElement('button', {
-              className: 'atfm-crumb',
-              onMouseDown: (event: { preventDefault(): void }) => { event.preventDefault(); setQueryText(crumbParts.slice(0, index + 1).join('/') + '/') },
-            }, part),
-          )),
-        ),
-        React.createElement('div', { className: 'atfm-viewport' },
-          browse.error !== undefined
-            ? React.createElement('div', { className: 'atfm-empty' }, browse.error)
-            : items.length === 0
-              ? React.createElement('div', { className: 'atfm-empty' }, browse.loading ? '加载中…' : '没有匹配的文件或目录')
-              : items.map((item, index) => React.createElement('button', {
-                key: item.relPath,
-                className: 'atfm-item' + (index === focus ? ' active' : ''),
-                role: 'option',
-                'aria-selected': index === focus,
-                onMouseDown: (event: { preventDefault(): void }) => {
+    return (
+      <div ref={rootRef} className="atfm-menu" role="listbox" style={{
+        left: pos !== null ? pos.left : undefined,
+        top: pos !== null ? pos.top : undefined,
+        maxHeight: pos !== null ? pos.maxHeight : undefined,
+        maxWidth: pos !== null ? pos.maxWidth : undefined,
+        visibility: pos !== null ? 'visible' : 'hidden',
+      }}>
+        <div className="atfm-box">
+          <span aria-hidden="true">🔍</span>
+          <input
+            value={queryText}
+            placeholder="搜索文件 / 目录（递归）…"
+            aria-label="搜索文件或目录"
+            onChange={(event) => setQueryText(event.target.value)}
+          />
+        </div>
+        {browse.dir !== '' && (
+          <div className="atfm-crumbs">
+            <button className="atfm-crumb" onMouseDown={(event) => { event.preventDefault(); setQueryText('') }}>工作目录</button>
+            {crumbParts.map((part, index) => (
+              <React.Fragment key={index}>
+                <span className="atfm-crumb-sep">/</span>
+                <button className="atfm-crumb" onMouseDown={(event) => { event.preventDefault(); setQueryText(crumbParts.slice(0, index + 1).join('/') + '/') }}>{part}</button>
+              </React.Fragment>
+            ))}
+          </div>
+        )}
+        <div className="atfm-viewport">
+          {browse.error !== undefined ? (
+            <div className="atfm-empty">{browse.error}</div>
+          ) : items.length === 0 ? (
+            <div className="atfm-empty">{browse.loading ? '加载中…' : '没有匹配的文件或目录'}</div>
+          ) : (
+            items.map((item, index) => (
+              <button
+                key={item.relPath}
+                className={'atfm-item' + (index === focus ? ' active' : '')}
+                role="option"
+                aria-selected={index === focus}
+                onMouseDown={(event) => {
                   event.preventDefault()
                   setFocus(index)
                   setVariant(0)
                   if (item.type === 'directory') setQueryText(item.relPath + '/')
                   else pick(item, 0)
-                },
-                onMouseEnter: (event: { clientX: number; clientY: number }) => {
+                }}
+                onMouseEnter={(event) => {
                   if (index !== focus) { setFocus(index); setVariant(0) }
                   showTip(event, item)
-                },
-                onMouseMove: (event: { clientX: number; clientY: number }) => showTip(event, item),
-                onMouseLeave: () => hideTip(),
-              },
-                React.createElement('span', { className: 'atfm-icon' }, item.type === 'directory' ? DIR_ICON : FILE_ICON),
-                React.createElement('span', { className: 'atfm-name' }, item.name + (item.type === 'directory' ? '/' : '')),
-                React.createElement('span', { className: 'atfm-desc' }, item.relPath),
-              )),
-        ),
-        highlighted !== undefined && React.createElement('div', { className: 'atfm-footer' },
-          React.createElement('span', { className: 'atfm-footer-label' }, '引用（Tab 切换 / Enter 插入）：'),
-          fmtNames.map((label, index) => React.createElement('button', {
-            key: label,
-            className: 'atfm-chip' + (index === variant ? ' active' : ''),
-            title: fmtPreviews[index],
-            onMouseDown: (event: { preventDefault(): void }) => { event.preventDefault(); pick(highlighted, index) },
-          }, label)),
-        ),
-      )
-    }
+                }}
+                onMouseMove={(event) => showTip(event, item)}
+                onMouseLeave={() => hideTip()}
+              >
+                <span className="atfm-icon">{item.type === 'directory' ? DIR_ICON : FILE_ICON}</span>
+                <span className="atfm-name">{item.name + (item.type === 'directory' ? '/' : '')}</span>
+                <span className="atfm-desc">{item.relPath}</span>
+              </button>
+            ))
+          )}
+        </div>
+        {highlighted !== undefined && (
+          <div className="atfm-footer">
+            <span className="atfm-footer-label">引用（Tab 切换 / Enter 插入）：</span>
+            {fmtNames.map((label, index) => (
+              <button
+                key={label}
+                className={'atfm-chip' + (index === variant ? ' active' : '')}
+                title={fmtPreviews[index]}
+                onMouseDown={(event) => { event.preventDefault(); pick(highlighted, index) }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    )
   }
+}
 
 /**
  * The plugin apply shared by both forms: registers the overlay with the
  * injected React + listing RPC and injects the stylesheet once.
  */
-export function buildApply(deps: { React: ReactLike; list: ListFn }): (ctx: { get(name: string): unknown }) => void {
+export function buildApply(deps: { React: typeof React; list: ListFn }): (ctx: { get(name: string): unknown }) => void {
   return (ctx) => {
     const slots = ctx.get('slots') as {
       inject(name: string, callback: () => unknown): unknown

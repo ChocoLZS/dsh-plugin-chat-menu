@@ -54,13 +54,15 @@ await writeFile(
 )
 
 // 3) Client core: browser IIFE inlined into both client artifacts.
+// JSX 用 classic 运行时（React.createElement）——React 由两种形态的环境注入，自动运行时不可用。
 const core = await build({
-  entryPoints: [join(root, 'src/core/menu-core.ts')],
+  entryPoints: [join(root, 'src/core/menu-core.tsx')],
   bundle: true,
   format: 'iife',
   globalName: 'CHATMENU_CORE',
   platform: 'browser',
   target,
+  jsx: 'transform',
   write: false,
 })
 const coreText = core.outputFiles[0].text
