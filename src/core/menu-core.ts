@@ -22,7 +22,7 @@ export type ListFn = (sessionId: string, path: string, filter: string) => Promis
 export const ATFM_STYLE_ID = 'dsh-plugin-chat-menu/atfm.css'
 
 export const ATFM_CSS = `
-.atfm-menu{position:absolute;z-index:200;width:560px;max-width:calc(100vw - 32px);max-height:400px;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu);box-shadow:var(--dsw-shadow-lv3);border-radius:12px;padding:4px;overflow:hidden;font-size:13px;line-height:20px}
+.atfm-menu{position:fixed;z-index:200;width:560px;max-width:calc(100vw - 32px);max-height:400px;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-specific-menu);box-shadow:var(--dsw-shadow-lv3);border-radius:12px;padding:4px;overflow:hidden;font-size:13px;line-height:20px}
 .atfm-box{display:flex;align-items:center;gap:6px;margin:2px 2px 6px;padding:0 8px;border:1px solid var(--dsw-alias-border-inverted);border-radius:8px}
 .atfm-box input{flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--dsw-alias-label-primary);padding:7px 0;font-size:13px}
 .atfm-crumbs{display:flex;align-items:center;gap:2px;flex-wrap:wrap;padding:0 8px 6px;font-size:12px}
@@ -178,7 +178,7 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
     const hitRef = React.useRef<{ start: number; end: number } | null>(null)
     const pickRef = React.useRef<((item: Entry, variantIndex: number) => void) | null>(null)
     const lastDraftRef = React.useRef<string | null>(null)
-    const [pos, setPos] = React.useState<{ left: number; top: number; maxHeight: number } | null>(null)
+    const [pos, setPos] = React.useState<{ left: number; top: number; maxHeight: number; maxWidth: number } | null>(null)
     const [tip, setTip] = React.useState<{ text: string; left: number; top: number } | null>(null)
     hitRef.current = hit
     const close = React.useCallback(() => {
@@ -351,31 +351,33 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
       return () => document.removeEventListener('keydown', onKeyDown, true)
     }, [hit === null, browse, focus, variant, close])
 
-    // 菜单定位：基于输入框里的 @ 光标，优先显示在光标上方；上方空间不足翻到下方；
-    // 水平/垂直钳制在视口内（防遮挡溢出）。滚动/缩放/内容变化时重新布局。
+    // 菜单定位：基于输入框里的 @ 光标，左缘对齐光标（即 @ 右侧）、优先在光标上方；
+    // 高度封顶（视口内滚动），水平/垂直钳制在视口内。滚动/缩放/内容变化时重新布局。
     React.useEffect(() => {
       if (hit === null) return
       const layout = (): void => {
         setTip(null)
         const active = document.activeElement
         if (!(active instanceof HTMLTextAreaElement)) return
-        const context = rootRef.current !== null && rootRef.current.offsetParent instanceof HTMLElement
-          ? rootRef.current.offsetParent
-          : null
-        const ctxRect = context !== null ? context.getBoundingClientRect() : null
         const caret = caretViewportRect(active)
         const margin = 8
-        const viewportMax = Math.max(160, window.innerHeight - margin * 2)
+        // 高度上限：不超过 400px（配合 .atfm-viewport 内部滚动），同时不超过视口
+        const maxMenuHeight = Math.min(400, Math.max(160, window.innerHeight - margin * 2))
         const measured = rootRef.current !== null ? rootRef.current.offsetHeight : 0
-        const menuHeight = Math.max(0, Math.min(measured || 320, viewportMax))
-        const menuWidth = rootRef.current !== null ? rootRef.current.offsetWidth : 560
+        const menuHeight = Math.max(0, Math.min(measured || 320, maxMenuHeight))
         let top = caret.top - menuHeight - 6
         if (top < margin) top = caret.top + caret.height + 6
-        top = Math.max(margin, Math.min(top, window.innerHeight - margin - Math.min(measured || 320, viewportMax)))
+        top = Math.max(margin, Math.min(top, window.innerHeight - margin - Math.min(measured || 320, maxMenuHeight)))
+        // 水平：左缘对齐光标（在 @ 右侧弹出）；宽度不超过光标右侧可用空间（下限 240px）。
+        // 仅当右侧连 240px 都没有时才回退为视口内钳制（不向左越出 @）。
+        const availRight = window.innerWidth - caret.left - margin
         let left = caret.left
-        if (left + menuWidth > window.innerWidth - margin) left = Math.max(margin, window.innerWidth - menuWidth - margin)
-        const base = ctxRect !== null ? { x: ctxRect.left, y: ctxRect.top } : { x: 0, y: 0 }
-        setPos({ left: left - base.x, top: top - base.y, maxHeight: viewportMax })
+        let maxWidth = Math.min(560, Math.max(240, availRight))
+        if (availRight < 240) {
+          maxWidth = 560
+          left = Math.max(margin, window.innerWidth - 560 - margin)
+        }
+        setPos({ left, top, maxHeight: maxMenuHeight, maxWidth })
       }
       layout()
       window.addEventListener('resize', layout)
@@ -452,7 +454,7 @@ export function createMenu(deps: { React: ReactLike; list: ListFn }): (props: Me
     }
 
     return [
-      React.createElement('div', { ref: rootRef, className: 'atfm-menu', role: 'listbox', style: { left: pos !== null ? pos.left : undefined, top: pos !== null ? pos.top : undefined, maxHeight: pos !== null ? pos.maxHeight : undefined, visibility: pos !== null ? 'visible' : 'hidden' } },
+      React.createElement('div', { ref: rootRef, className: 'atfm-menu', role: 'listbox', style: { left: pos !== null ? pos.left : undefined, top: pos !== null ? pos.top : undefined, maxHeight: pos !== null ? pos.maxHeight : undefined, maxWidth: pos !== null ? pos.maxWidth : undefined, visibility: pos !== null ? 'visible' : 'hidden' } },
         React.createElement('div', { className: 'atfm-box' },
           React.createElement('span', { 'aria-hidden': 'true' }, '🔍'),
           React.createElement('input', {
