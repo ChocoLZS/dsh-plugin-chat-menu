@@ -168,12 +168,19 @@ function attachInputKeys(): () => void {
       setComposerValue(textarea, next, hit.start + desc.trim().length + 2)
       return
     }
-    // ArrowLeft：返回上一级（缩短 @token 的路径段；根层过滤时放行）
+    // ArrowLeft：逐级返回——先清过滤词停在本目录，再按才上一级；根层过滤放行
     const lastSlash = hit.query.lastIndexOf('/')
     if (lastSlash < 0) return // 根层过滤 → 放行（光标正常移动）
-    const pathPart = hit.query.slice(0, lastSlash)
-    const parentSlash = pathPart.lastIndexOf('/')
-    const parent = parentSlash < 0 ? '' : pathPart.slice(0, parentSlash + 1)
+    let parent: string
+    if (hit.query.endsWith('/')) {
+      // 当前在目录内：去掉最后一个路径段（上一级）
+      const pathPart = hit.query.slice(0, lastSlash)
+      const parentSlash = pathPart.lastIndexOf('/')
+      parent = parentSlash < 0 ? '' : pathPart.slice(0, parentSlash + 1)
+    } else {
+      // 有过滤词：先清掉过滤词，停在当前目录（下一次 ← 再上一级）
+      parent = hit.query.slice(0, lastSlash + 1)
+    }
     const next = textarea.value.slice(0, hit.start) + '@' + parent + textarea.value.slice(caret)
     event.preventDefault()
     event.stopPropagation()
