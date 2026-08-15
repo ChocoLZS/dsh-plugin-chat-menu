@@ -9,7 +9,7 @@
 <div align="center">
 
 ![platform](https://img.shields.io/badge/platform-DSH-0a66c2)
-![plugin type](https://img.shields.io/badge/type-dynamic%20Cordis%20plugin-orange)
+![plugin type](https://img.shields.io/badge/type-DSH%20bundle%20plugin-orange)
 ![language](https://img.shields.io/badge/language-JavaScript-f7df1e)
 ![license](https://img.shields.io/github/license/ChocoLZS/dsh-plugin-chat-menu)
 ![stars](https://img.shields.io/github/stars/ChocoLZS/dsh-plugin-chat-menu)
