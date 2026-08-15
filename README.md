@@ -77,12 +77,37 @@ dsh plugin --profile web add "file:$(pwd)"
 
 ### 动态插件（未发布 npm 时，快速使用 / 调试）
 
-chat-menu 同时提供**动态 Cordis 插件**形态（`dynamic/` 目录，函数体源码，无需 npm 发布）：
+chat-menu 同时提供**动态 Cordis 插件**形态（`dynamic/` 目录，由构建生成）：
+
+```sh
+npm run build          # 生成 lib/ 与 dynamic/
+```
 
 1. `cordis_define`：`idPrefix: atfile`；`code.host` / `code.client` 分别取 `dynamic/host.js` / `dynamic/client.js` 的函数体；
 2. `cordis_run`：首次 `run` 激活（浏览器半首次需批准），改版 `update` 同一 pluginId。
 
 > ⚠️ 动态插件随 DSH 进程重启而清空，重启后需重新装载。**同一时间只装一种形态**：动态版与 bundle 版都会注册 `@` 文件菜单，同时运行会出现两个菜单——装 bundle 版就不要加载动态版（反之亦然）。
+
+## 🧬 单一源码保证
+
+两种形态（bundle 版与动态版）**由同一份 TypeScript 源码构建生成**，不存在两份手工维护的副本：
+
+```
+src/
+├── core/                  # 共享核心（唯一逻辑来源，零环境依赖）
+│   ├── host-core.ts       #   目录列举逻辑（服务注入；bundle 路由与动态桥共用）
+│   └── menu-core.ts       #   @ 菜单 UI（React/RPC 注入；含 buildApply）
+└── host/
+    ├── bundle.ts          #   bundle Host 装配（webServer 路由 + 信任栅栏）
+    └── dynamic.ts         #   动态 Host 装配（harness.handle 桥）
+```
+
+`npm run build`（`scripts/build.mjs`，esbuild）从这些源文件产出两种安装形态：
+
+- `lib/` → **bundle 版**（`dsh plugin add`）：`index.js`（ESM Host）+ `client.js` / `client-registry.js`（module-loader factory）
+- `dynamic/` → **动态版**（`cordis_define`）：`host.js` / `client.js`（函数体，核心内联）
+
+两者只差「安装方式 + 注册周期 + 传输通道」（HTTP 路由 ↔ `harness.handle`/`host.call`），**业务逻辑与 UI 全部来自同一份 `src/core/`**。改逻辑只需改 `src/`，再 `npm run build` 两种形态同步更新。
 
 ## ⌨️ 使用速查
 
@@ -103,28 +128,26 @@ dsh-plugin-chat-menu/
 ├── README.md            # 本文件
 ├── AGENTS.md            # dsh-plugin-* 仓库族约定（agent 开发必读）
 ├── LICENSE              # MIT
-├── package.json         # npm 包清单（dsh.bundle.patch / dsh.client 声明）
+├── package.json         # npm 包清单（devDeps: typescript/esbuild；dsh.bundle.patch / dsh.client）
+├── tsconfig.json        # TypeScript 配置（npm run typecheck）
 ├── dsh.plugin.json      # 插件注册表清单（id / client.main）
 ├── cordis.patch.yml     # bundle 挂载补丁（dsh plugin add 自动注册）
-├── src/
-│   ├── host.js          #   Host 半：/chat-menu/list 路由（目录解析、名称过滤、递归搜索）
-│   └── client.js        #   浏览器半：module-loader bundle（@ 浮层菜单）
-├── dynamic/
-│   ├── host.js          #   动态插件形态 Host 半（harness.handle，未发布 npm 时使用）
-│   ├── client.js        #   动态插件形态浏览器半（闭包符号）
-│   └── README.md        #   动态装载说明
+├── src/                 # ★ 单一 TypeScript 源码
+│   ├── core/            #   共享核心（host-core.ts 列举逻辑 / menu-core.ts 菜单 UI）
+│   └── host/            #   装配（bundle.ts 路由 / dynamic.ts 动态桥）
+├── dynamic/             # 构建产物（npm run build 生成，不入库）：动态函数体
 ├── scripts/
-│   ├── build.mjs        #   构建 lib/（替换 __CLIENT_ID__，产出双通道 bundle）
+│   ├── build.mjs        #   esbuild 单一源码 → lib/ + dynamic/（两种形态）
 │   ├── install.sh       #   一键安装（macOS / Linux / Git Bash）
 │   └── install.ps1      #   一键安装（Windows PowerShell）
-└── lib/                 # 构建产物（npm run build 生成，不入库）
+└── lib/                 # 构建产物（npm run build 生成，不入库）：bundle 版
     ├── index.js
     ├── client.js
     └── client-registry.js
 ```
 
-- `src/host.js` — 入参 `{ sessionId, path, filter }`：`path` 逐段解析真实目录（先精确、后忽略大小写），`filter` 名称过滤；工作目录取会话 `header.cwd`，缺失回退 `sandboxPolicy.workspaceRoot`；仅响应回环/同源请求。
-- `src/client.js` — `@token` 检测复用内置触发器词边界规则；菜单的打开/关闭只由**草稿文本变化**驱动，`ESC` 关闭后光标/keyup/点击不会把它弹回；选中后经 `inputActions.setDraft` 替换 token；Host RPC 走本插件自己的 `/chat-menu/list` 路由。
+- `src/core/host-core.ts` — 入参 `{ sessionId, path, filter }`：`path` 逐段解析真实目录（先精确、后忽略大小写），`filter` 名称过滤；工作目录取会话 `header.cwd`，缺失回退 `sandboxPolicy.workspaceRoot`。
+- `src/core/menu-core.ts` — `@token` 检测复用内置触发器词边界规则；菜单的打开/关闭只由**草稿文本变化**驱动，`ESC` 关闭后光标/keyup/点击不会把它弹回；选中后经 `inputActions.setDraft` 替换 token。
 
 ## 📝 License
 

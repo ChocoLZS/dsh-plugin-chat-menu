@@ -26,28 +26,35 @@ dsh-plugins/
 ```
 # 本仓库（GitHub: dsh-plugin-chat-menu）
 dsh-plugin-chat-menu/
-├── README.md            # 插件说明（功能、两种安装方式、结构）
+├── README.md            # 插件说明（功能、两种安装方式、单一源码、结构）
 ├── AGENTS.md            # 本文件：仓库族约定
-├── package.json         # npm 包清单（dsh.bundle.patch / dsh.client）
+├── package.json         # npm 包清单（typescript/esbuild devDeps；dsh.bundle.patch / dsh.client）
+├── tsconfig.json        # TypeScript 配置
 ├── cordis.patch.yml     # bundle 挂载补丁
-├── src/                 # bundle 版源码（host.js / client.js）
-├── dynamic/             # 动态插件形态（host.js / client.js / README.md）
-└── scripts/             # build.mjs / install.sh / install.ps1
+├── src/                 # ★ 单一 TypeScript 源码（core/ 共享核心 + host/ 装配）
+├── dynamic/             # 构建产物：动态插件函数体（npm run build 生成，不入库）
+├── scripts/             # build.mjs / install.sh / install.ps1
+└── lib/                 # 构建产物：bundle 版（npm run build 生成，不入库）
 ```
 
-## 插件开发规则（DSH bundle 插件）
+## 插件开发规则（单一 TypeScript 源码）
 
-- **Host 半（`src/host.js`）**：ESM 模块，命名导出 `name` / `inject` / `apply`（函数插件形态）。跨端 RPC 用 `webServer` 路由（如 `/chat-menu/list`），客户端 `fetch` 调用；只响应回环/同源请求。
-- **浏览器半（`src/client.js`）**：`window.__ModuleLoader__.load({ id, factory })` CJS 闭包工厂；`require('react')` 经模块表解析；`module.exports = { name, inject, apply }`。UI 用 `React.createElement`，样式在工厂内以 `<style data-plugin-css>` 注入（幂等）。
-- **构建**：`npm run build`（`scripts/build.mjs`）产出 `lib/`——host 直拷，浏览器半替换 `__CLIENT_ID__` 生成 `lib/client.js`（官方通道）与 `lib/client-registry.js`（注册表通道）。
+**单一源码保证**：两种安装形态（bundle 版 `lib/` 与动态版 `dynamic/`）由 `npm run build` 从同一份 TypeScript 源码生成，只差安装方式 / 注册周期 / 传输通道。改逻辑只改 `src/`，禁止手工编辑 `lib/` 或 `dynamic/`（构建产物，gitignore）。
+
+- **共享核心（`src/core/`）**：`host-core.ts`（目录列举逻辑，服务注入、无环境依赖）、`menu-core.ts`（@ 菜单 UI，React/RPC 注入，含 `createMenu` / `buildApply` / CSS）。核心不得引用任何宿主符号（无 harness / styles / require）。
+- **Host 装配（`src/host/`）**：
+  - `bundle.ts` — ESM 函数插件（命名导出 `name`/`inject`/`apply`），`webServer` 路由 `/chat-menu/list` + 回环/同源信任栅栏；
+  - `dynamic.ts` — 动态桥（`harness.handle`），与 bundle 共用同一 `host-core` 核心。
+- **浏览器半壳（在 `scripts/build.mjs` 模板内）**：bundle = module-loader factory（`require('react')` + fetch）；动态 = 闭包符号（React / host）+ `host.call`。两者都调 `CHATMENU_CORE.buildApply(...)`，UI 全部来自 `menu-core.ts`。
+- **构建**：`npm run typecheck`（tsc --noEmit）→ `npm run build`（esbuild）产出 `lib/index.js`、`lib/client.js`、`lib/client-registry.js`、`dynamic/host.js`、`dynamic/client.js`。
 - **副作用可回收**：事件监听、路由注册等一律挂插件 Fiber（`ctx.effect` / 组件 `useEffect`），stop/update 后不留残留。
 - **UI 位置**：输入区浮层类 UI 注册在 `conversation.input.overlay` 槽位（先 `cordis_inspect_query` 确认槽位契约）。
 
-## 动态插件形态（`dynamic/`）
+## 动态插件形态（`dynamic/`，构建产物）
 
-`dynamic/host.js` / `dynamic/client.js` 是同一插件的**动态 Cordis 插件**函数体形态（`return { name, apply }`），通过会话内工具装载（`cordis_define` + `cordis_run`），适合未发布 npm 时使用/调试：
+`dynamic/host.js` / `dynamic/client.js` 是动态 Cordis 插件函数体（`var` + `return { name, apply }`），通过会话内工具装载（`cordis_define` + `cordis_run`），适合未发布 npm 时使用/调试：
 
-- Host 半用 `harness.handle` 注册 RPC；浏览器半用闭包符号（`React` / `styles` / `host`）。
+- Host 半用 `harness.handle` 注册 RPC；浏览器半用闭包符号（`React` / `host`）——传输通道与 bundle 版不同，逻辑共用核心。
 - 两种形态功能一致，**同一时间只装一种**（都注册 `@` 文件菜单；bundle 版 overlay id `chat-menu`，动态版 `at-file-menu`）。
 - 动态版随进程重启清空，需要重新装载。
 
@@ -55,13 +62,13 @@ dsh-plugin-chat-menu/
 
 **bundle 版（正式安装）**：
 
-1. `npm run build` 生成 `lib/`；
+1. `npm run typecheck && npm run build` 生成 `lib/` 与 `dynamic/`；
 2. `dsh plugin --profile <name> add dsh-plugin-chat-menu`（或 `file:<仓库路径>` 本地安装）——CLI 识别包内 `dsh.bundle.patch`（`cordis.patch.yml`），自动写入 `dsh.profile.bundles` 完成挂载；
 3. 重启 DSH（host 半是启动期组合）并硬刷新浏览器生效。
 
 一键安装脚本：`scripts/install.sh`（macOS/Linux）/ `scripts/install.ps1`（Windows）。发布到 npm 前，脚本与 CLI 命令需要先 `npm publish`。
 
-**动态版（未发布 npm / 调试）**：`cordis_define`（`idPrefix: atfile`，code 取 `dynamic/` 下函数体）→ `cordis_run`（首次 `run`，改版 `update`）。
+**动态版（未发布 npm / 调试）**：先 `npm run build`，再 `cordis_define`（`idPrefix: atfile`，code 取 `dynamic/` 下函数体）→ `cordis_run`（首次 `run`，改版 `update`）。
 
 ## 仓库纪律
 
